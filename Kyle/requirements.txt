@@ -1,0 +1,11 @@
+# ME135 Camera Processing — Python dependencies
+anthropic>=0.40.0          # Claude API SDK (for orchestrator)
+opencv-python-headless>=4.9.0  # CV pipeline (use opencv-python for GUI preview)
+numpy>=1.26.0
+pyserial>=3.5               # ESP32 serial communication
+tqdm>=4.66.0                # Progress bars
+pyyaml>=6.0                 # config.yaml parsing
+
+# Optional: GPU acceleration on Jetson
+# cupy-cuda12x               # Uncomment if CUDA 12 available
+# Install on Jetson via JetPack: sudo apt install python3-opencv (CUDA-enabled build)

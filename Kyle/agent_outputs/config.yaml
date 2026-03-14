@@ -1,0 +1,74 @@
+# ============================================================================
+# ME135 Human Detection System — Central Configuration
+# UC Berkeley, Spring 2026 — Prof. George Anwar
+# ============================================================================
+# This file is the SINGLE SOURCE OF TRUTH for all tuneable parameters.
+# Every Python module reads from this file via config_load() in main.py.
+#
+# Hardware: Jetson Orin Nano Super (JetPack 6, CUDA 12.2, OpenCV 4.8)
+#           + ESP32-DevKitC + 108×108 WS2812B LED panel
+# ============================================================================
+
+# --- Camera ---
+camera:
+  device_index: 0                  # /dev/video0  (PS3 Eye via gspca_ov534)
+  capture_width: 640               # Native PS3 Eye resolution
+  capture_height: 480
+  capture_fps: 60                  # PS3 Eye max frame rate
+  warmup_frames: 90                # Frames to discard on startup (auto-exposure settle)
+
+# --- Calibration (background model) ---
+calibration:
+  num_frames: 200                  # Frames captured for background model
+  method: "mog2"                   # "mog2" | "knn" | "static_median"
+  mog2_history: 500
+  mog2_var_threshold: 50           # 16 was too sensitive; 40-80 is typical for stable lighting
+  mog2_detect_shadows: false       # Shadows cause false positives; re-enable if shadow removal needed
+  knn_history: 500
+  knn_dist2_threshold: 400.0
+  knn_detect_shadows: true
+  static_median_alpha: 0.01        # EMA blending for static median method
+
+# --- Processing pipeline ---
+processing:
+  output_width: 400                # Binary matrix columns
+  output_height: 300               # Binary matrix rows
+  threshold: 25                    # Pixel diff threshold (0-255) for static method
+  morph_kernel_size: 5             # Morphological open/close kernel (px)
+  min_contour_area: 500            # Discard blobs smaller than this (px²)
+  gaussian_blur_ksize: 5           # Pre-blur kernel size (must be odd)
+  use_gpu: true                    # true = attempt CUDA; false = CPU only
+
+# --- Serial protocol (Jetson → ESP32) ---
+serial:
+  port: "/dev/ttyUSB0"            # ESP32 UART port on Jetson
+  baud_rate: 2000000               # 2 Mbaud — ESP32 UART max practical
+  timeout_s: 0.1                   # Serial read timeout
+  frame_start: [0xAA, 0x55]       # Sync marker — start
+  frame_end:   [0x55, 0xAA]       # Sync marker — end
+  max_retries: 3                   # Retransmit on NAK
+  ack_timeout_s: 0.05             # Time to wait for ACK/NAK from ESP32
+
+# --- Display (driven by ESP32) ---
+display:
+  type: "ws2812b"                  # "ws2812b" | "split_flap"
+  panel_width: 108                 # Physical LED panel columns
+  panel_height: 108                # Physical LED panel rows (108x108 = 11,664 LEDs)
+  brightness: 128                  # 0-255, for WS2812B
+  gpio_data_pin: 13               # ESP32 GPIO for NeoPixel data
+  fps_target: 3                    # WS2812B hard limit: 11,664 LEDs x 30us = ~350ms/frame
+
+# --- LabVIEW IoT Hub ---
+labview:
+  enabled: false                   # Set true when LabVIEW dashboard is running
+  hub_ip: "192.168.1.100"
+  hub_port: 5020
+  protocol: "tcp"                  # "tcp" | "udp"
+  heartbeat_interval_s: 2.0       # ESP32 → LabVIEW status heartbeat
+
+# --- Safety / Watchdog ---
+safety:
+  watchdog_timeout_s: 5.0         # If no frame processed in this window, halt
+  max_cpu_temp_c: 80              # Jetson thermal throttle safeguard
+  max_serial_errors: 10           # Consecutive serial errors before shutdown
+  log_level: "INFO"               # DEBUG | INFO | WARNING | ERROR

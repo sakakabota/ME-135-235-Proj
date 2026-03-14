@@ -1,0 +1,22 @@
+# ME135 Human Detection System — Python dependencies
+# Install:  pip install -r requirements.txt
+# Note: opencv-contrib-python provides CUDA support when built from source;
+#       on Jetson, use the NVIDIA-provided opencv4 wheel instead.
+
+# --- Core ---
+numpy>=1.24,<2.0
+opencv-contrib-python>=4.8.0      # CPU fallback; Jetson uses system OpenCV
+PyYAML>=6.0
+pyserial>=3.5
+
+# --- GPU (Jetson only — already in JetPack SDK) ---
+# pycuda>=2022.1                  # Uncomment if custom CUDA kernels needed
+
+# --- Utilities ---
+imutils>=0.5.4                     # Convenience wrappers for OpenCV
+tqdm>=4.65                         # Progress bars during calibration
+
+# --- Development / Testing ---
+pytest>=7.0
+flake8>=6.0
+black>=23.0
