@@ -6,11 +6,11 @@ No Google Cloud Console admin access required.
 rclone bundles its own OAuth app — just sign in with your school account.
 
 Run once:
-    python gdrive_setup.py
+    python3 gdrive_setup.py
 
 What it does:
   1. Verifies rclone is installed
-  2. Runs `rclone config create` to set up Google Drive remote named "me135drive"
+  2. Creates Google Drive remote named "me135drive" non-interactively
   3. Opens browser → sign in with your @berkeley.edu account
   4. Creates the "ME135 Feature Reports" folder in your Drive
   5. Does a test sync to verify everything works
@@ -20,9 +20,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-REMOTE_NAME   = "me135drive"
-DRIVE_FOLDER  = "ME135 Feature Reports"
-FEATURES_DIR  = Path(__file__).parent / "docs" / "features"
+REMOTE_NAME  = "me135drive"
+DRIVE_FOLDER = "ME135 Feature Reports"
+FEATURES_DIR = Path(__file__).parent / "docs" / "features"
 
 
 def run(cmd: list[str], check=True, **kwargs) -> subprocess.CompletedProcess:
@@ -33,114 +33,96 @@ def main():
     print()
     print("╔══════════════════════════════════════════════════╗")
     print("║   ME135 Google Drive Setup (via rclone)          ║")
-    print("║   No Google Cloud Console admin required.        ║")
     print("╚══════════════════════════════════════════════════╝")
     print()
 
     # ── 1. Check rclone ───────────────────────────────────────────────────────
-    result = run(["which", "rclone"], check=False, capture_output=True)
-    if result.returncode != 0:
-        print("ERROR: rclone not found.")
-        print("Install it with:  brew install rclone")
+    if run(["which", "rclone"], check=False, capture_output=True).returncode != 0:
+        print("ERROR: rclone not found.  Install: brew install rclone")
         sys.exit(1)
 
-    version = run(["rclone", "version", "--check=false"],
-                  capture_output=True, text=True, check=False)
-    print(f"  ✅ rclone found: {version.stdout.splitlines()[0] if version.stdout else 'ok'}")
+    ver = run(["rclone", "version"], capture_output=True, text=True, check=False)
+    print(f"  ✅ {ver.stdout.splitlines()[0] if ver.stdout else 'rclone ok'}")
 
-    # ── 2. Check if remote already exists ────────────────────────────────────
+    # ── 2. Remove any bad existing config and recreate cleanly ───────────────
     remotes = run(["rclone", "listremotes"], capture_output=True, text=True, check=False)
     if f"{REMOTE_NAME}:" in remotes.stdout:
-        print(f"  ✅ Remote '{REMOTE_NAME}' already configured.")
-    else:
-        print(f"\n  Configuring Google Drive remote '{REMOTE_NAME}'…")
-        print("  A browser window will open — sign in with your @berkeley.edu account.")
-        print("  When asked for a name, it will use 'me135drive' automatically.\n")
+        print(f"  🔄 Removing existing '{REMOTE_NAME}' remote (may have bad client_id)…")
+        run(["rclone", "config", "delete", REMOTE_NAME], check=False, capture_output=True)
 
-        # rclone config create runs non-interactively for most fields,
-        # but needs browser for OAuth. Use `rclone config` interactively instead.
-        print("  Running: rclone config")
-        print("  ─────────────────────────────────────────────────────────────")
-        print("  Follow these steps in the config wizard:")
-        print("    1. Type 'n' → new remote")
-        print(f"   2. Name: {REMOTE_NAME}")
-        print("    3. Storage: choose 'drive' (Google Drive) — type its number")
-        print("    4. client_id: leave blank (press Enter)")
-        print("    5. client_secret: leave blank (press Enter)")
-        print("    6. scope: type '1' (full access)")
-        print("    7. root_folder_id: leave blank")
-        print("    8. service_account_file: leave blank")
-        print("    9. Edit advanced config? n")
-        print("   10. Use auto config? y  → browser opens, sign in with school account")
-        print("   11. Configure as shared drive? n")
-        print("   12. Keep this? y")
-        print("   13. Type 'q' to quit config")
-        print("  ─────────────────────────────────────────────────────────────\n")
-        run(["rclone", "config"])
-
-    # ── 3. Verify remote works ────────────────────────────────────────────────
+    # Create the remote with correct settings (blank client_id = rclone's bundled key)
+    print(f"  ⚙️  Creating '{REMOTE_NAME}' remote with Drive scope…")
     result = run(
-        ["rclone", "lsd", f"{REMOTE_NAME}:"],
-        capture_output=True, text=True, check=False
+        ["rclone", "config", "create", REMOTE_NAME, "drive",
+         "scope", "drive",
+         "client_id", "",        # blank = use rclone's bundled OAuth app
+         "client_secret", ""],   # blank
+        capture_output=True, text=True, check=False,
     )
     if result.returncode != 0:
-        print(f"\nERROR: Could not connect to remote '{REMOTE_NAME}'.")
-        print(f"  {result.stderr.strip()}")
+        print(f"  ⚠️  Config create warning: {result.stderr.strip()[:200]}")
+
+    # ── 3. Trigger OAuth browser flow ────────────────────────────────────────
+    print()
+    print("  🌐 Opening browser for Google sign-in…")
+    print("  → Sign in with kyle-nelson@berkeley.edu")
+    print("  → Click 'Allow' when asked about rclone's Drive access")
+    print()
+
+    # rclone config reconnect handles the OAuth interactively
+    result = run(
+        ["rclone", "config", "reconnect", REMOTE_NAME, "--auto-confirm"],
+        check=False,
+    )
+    if result.returncode != 0:
+        # auto-confirm may not be available on older rclone; fall back
+        run(["rclone", "config", "reconnect", REMOTE_NAME], check=False)
+
+    # ── 4. Verify connection ──────────────────────────────────────────────────
+    print()
+    result = run(["rclone", "lsd", f"{REMOTE_NAME}:"], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        print(f"  ❌ Connection failed: {result.stderr.strip()[:300]}")
+        print()
+        print("  Troubleshooting:")
+        print("  1. Make sure you clicked 'Allow' in the browser")
+        print("  2. Try again: python3 gdrive_setup.py")
         sys.exit(1)
 
-    email_hint = ""
-    # Try to get user info
-    info = run(
-        ["rclone", "about", f"{REMOTE_NAME}:"],
-        capture_output=True, text=True, check=False
-    )
+    info = run(["rclone", "about", f"{REMOTE_NAME}:"], capture_output=True, text=True, check=False)
     if info.returncode == 0:
-        print(f"  ✅ Connected to Google Drive:")
-        for line in info.stdout.splitlines()[:4]:
+        print("  ✅ Connected to Google Drive:")
+        for line in info.stdout.splitlines()[:3]:
             print(f"     {line}")
-    else:
-        print(f"  ✅ Remote '{REMOTE_NAME}' connected.")
 
-    # ── 4. Create destination folder ─────────────────────────────────────────
-    print(f"\n  Creating folder '{DRIVE_FOLDER}' in Drive…")
-    run(
-        ["rclone", "mkdir", f"{REMOTE_NAME}:{DRIVE_FOLDER}"],
-        check=False
-    )
+    # ── 5. Create folder + test sync ─────────────────────────────────────────
+    print(f"\n  📂 Creating '{DRIVE_FOLDER}' folder in Drive…")
+    run(["rclone", "mkdir", f"{REMOTE_NAME}:{DRIVE_FOLDER}"], check=False, capture_output=True)
 
-    # ── 5. Write a test file and sync ────────────────────────────────────────
     FEATURES_DIR.mkdir(parents=True, exist_ok=True)
-    test_file = FEATURES_DIR / "ME135_SETUP_TEST.md"
-    test_file.write_text(
-        "# ME135 Feature Reports\n\nGoogle Drive sync is working.\n"
-        "This file will be replaced by real feature reports on your next git push.\n",
-        encoding="utf-8",
-    )
+    test_file = FEATURES_DIR / "_setup_test.md"
+    test_file.write_text("# ME135 Feature Reports\nDrive sync is working.\n")
 
-    print(f"  Syncing test file to Drive…")
     result = run(
         ["rclone", "sync", str(FEATURES_DIR), f"{REMOTE_NAME}:{DRIVE_FOLDER}",
          "--drive-skip-gdocs", "--log-level", "ERROR"],
         capture_output=True, text=True, check=False,
     )
+    test_file.unlink(missing_ok=True)
 
     if result.returncode == 0:
-        folder_url = f"https://drive.google.com/drive/search?q={DRIVE_FOLDER.replace(' ', '+')}"
-        print(f"\n  ✅ Setup complete!")
-        print(f"  📂 Feature Reports folder in your Drive:")
-        print(f"     Search Drive for: {DRIVE_FOLDER}")
         print()
-        print("  From now on, every `git push` will:")
+        print("  ✅ Setup complete!")
+        print(f"  📂 Search Drive for:  {DRIVE_FOLDER}")
+        print()
+        print("  Every git push will now:")
         print("    1. Run 3 AI agents (Historian, Architect, Critic)")
         print("    2. Append a versioned section to each affected feature doc")
         print("    3. Sync all feature docs to your Drive automatically")
         print()
     else:
-        print(f"  ⚠️  Sync failed: {result.stderr[:200]}")
+        print(f"  ⚠️  Test sync failed: {result.stderr[:200]}")
         print("  Feature docs will still be saved locally in Kyle/docs/features/")
-
-    # Clean up test file
-    test_file.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
