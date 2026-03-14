@@ -182,9 +182,10 @@ void setup() {
     Serial.println("[ME135] ESP32 Display Controller starting…");
 
     // Jetson UART
-    JetsonSerial.begin(SERIAL_BAUD, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
-    // RX buffer — 1,464 bytes/frame; 4KB is plenty
+    // RX buffer — 1,466 bytes/frame; 4KB is plenty
+    // Must be called BEFORE begin() — after begin() it is a no-op
     JetsonSerial.setRxBufferSize(4096);
+    JetsonSerial.begin(SERIAL_BAUD, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
 
     // LED panel
     strip.begin();
@@ -200,13 +201,18 @@ void setup() {
 // Main loop
 // ============================================================
 void loop() {
+    static bool skipDisplay = false;
     RxResult result = receiveFrame();
 
     switch (result) {
         case RX_OK:
             JetsonSerial.write(ACK_BYTE);
             lastFrameMs = millis();
-            updateDisplay();
+            if (!skipDisplay) {
+                updateDisplay();
+            }
+            // If data is already queued, skip next display update to catch up
+            skipDisplay = (JetsonSerial.available() >= FRAME_HEADER_SIZE);
             break;
 
         case RX_CRC_ERROR:

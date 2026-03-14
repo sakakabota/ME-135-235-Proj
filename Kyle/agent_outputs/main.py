@@ -53,6 +53,16 @@ def load_config(path: str) -> dict:
     return cfg
 
 
+def validate_config(cfg: dict) -> None:
+    required = ["camera", "calibration", "processing", "serial", "display", "safety"]
+    missing = [k for k in required if k not in cfg]
+    if missing:
+        raise ValueError(
+            f"config.yaml is missing required section(s): {missing}. "
+            f"Check config.yaml against the expected schema."
+        )
+
+
 # ── Main ───────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(description="ME135 Human Detection System")
@@ -71,6 +81,7 @@ def main():
 
     # ── Load config ──
     config = load_config(args.config)
+    validate_config(config)
     log_level = config.get("safety", {}).get("log_level", "INFO")
     logging.getLogger().setLevel(getattr(logging, log_level, logging.INFO))
 
@@ -166,12 +177,10 @@ def main():
                 consecutive_errors = 0
 
         # ── Live B&W mask preview ──
-        if binary_matrix is not None:
-            # White = human detected, Black = background
+        if args.show_preview and binary_matrix is not None:
             mask_display = (binary_matrix * 255).astype(np.uint8)
             mask_bgr = cv2.cvtColor(mask_display, cv2.COLOR_GRAY2BGR)
-            # Optionally stack side-by-side with raw frame
-            if args.show_preview and raw_frame is not None:
+            if raw_frame is not None:
                 h, w = binary_matrix.shape[:2]
                 raw_resized = cv2.resize(raw_frame, (w, h))
                 display = np.hstack([raw_resized, mask_bgr])

@@ -575,7 +575,12 @@ async def run_implementer(client: anthropic.AsyncAnthropic, proposal: dict, proj
             return project_files.get(fn, f"Not found: {fn}")[:8000]
         elif name == "apply_fix":
             fn = inp["filename"]
-            path = PROJECT_ROOT / fn
+            path = (PROJECT_ROOT / fn).resolve()
+            # Safety: must stay inside the repo
+            try:
+                path.relative_to(PROJECT_ROOT.resolve())
+            except ValueError:
+                return f"ERROR: Path traversal denied: '{fn}'"
             if not path.exists():
                 return f"ERROR: File not found: {path}"
             old = inp["old_text"]

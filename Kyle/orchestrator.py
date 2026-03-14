@@ -80,7 +80,8 @@ Software constraints:
   - Language:  Python (preferred) or LabVIEW
   - CV library: OpenCV (with CUDA backend on Jetson)
   - Output:    400×300 np.ndarray of uint8 (0 = background, 1 = human)
-  - Protocol:  Serial UART — bit-packed matrix (15,000 bytes/frame)
+  - Protocol:  Serial UART — bit-packed matrix; CV at 400×300, downsampled to 108×108 for LED panel
+               Transmission: 1,458B payload + 8B framing = 1,466 bytes/frame at 2Mbaud
 
 Algorithm:
   1. Record a short calibration video (empty room, no humans)
@@ -136,14 +137,20 @@ TOOLS = [
 
 def execute_tool(name: str, tool_input: dict) -> str:
     if name == "write_file":
-        path = OUTPUT_DIR / tool_input["filename"]
+        filename = tool_input["filename"]
+        if Path(filename).name != filename:
+            return f"ERROR: Invalid filename '{filename}' — path traversal not allowed."
+        path = OUTPUT_DIR / filename
         path.write_text(tool_input["content"], encoding="utf-8")
         return f"✓ Written: {path}"
     elif name == "read_file":
-        path = OUTPUT_DIR / tool_input["filename"]
+        filename = tool_input["filename"]
+        if Path(filename).name != filename:
+            return f"ERROR: Invalid filename '{filename}' — path traversal not allowed."
+        path = OUTPUT_DIR / filename
         if path.exists():
             return path.read_text(encoding="utf-8")
-        return f"File not found: {tool_input['filename']}"
+        return f"File not found: {filename}"
     return f"Unknown tool: {name}"
 
 # ─── Agent runner ─────────────────────────────────────────────────────────────

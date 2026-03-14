@@ -16,6 +16,7 @@ What it does:
   5. Does a test sync to verify everything works
 """
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +30,19 @@ def run(cmd: list[str], check=True, **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, check=check, **kwargs)
 
 
+def _create_remote():
+    print(f"  ⚙️  Creating '{REMOTE_NAME}' remote with Drive scope…")
+    result = run(
+        ["rclone", "config", "create", REMOTE_NAME, "drive",
+         "scope", "drive",
+         "client_id", "",
+         "client_secret", ""],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        print(f"  ⚠️  Config create warning: {result.stderr.strip()[:200]}")
+
+
 def main():
     print()
     print("╔══════════════════════════════════════════════════╗")
@@ -37,46 +51,45 @@ def main():
     print()
 
     # ── 1. Check rclone ───────────────────────────────────────────────────────
-    if run(["which", "rclone"], check=False, capture_output=True).returncode != 0:
+    if shutil.which("rclone") is None:
         print("ERROR: rclone not found.  Install: brew install rclone")
         sys.exit(1)
 
     ver = run(["rclone", "version"], capture_output=True, text=True, check=False)
     print(f"  ✅ {ver.stdout.splitlines()[0] if ver.stdout else 'rclone ok'}")
 
-    # ── 2. Remove any bad existing config and recreate cleanly ───────────────
+    # ── 2. Check existing config or recreate ──────────────────────────────────
     remotes = run(["rclone", "listremotes"], capture_output=True, text=True, check=False)
+    needs_oauth = True
     if f"{REMOTE_NAME}:" in remotes.stdout:
-        print(f"  🔄 Removing existing '{REMOTE_NAME}' remote (may have bad client_id)…")
-        run(["rclone", "config", "delete", REMOTE_NAME], check=False, capture_output=True)
+        # Test if the existing remote is functional
+        test = run(["rclone", "lsd", f"{REMOTE_NAME}:"], capture_output=True, check=False)
+        if test.returncode == 0:
+            print(f"  ✅ Remote '{REMOTE_NAME}' already configured and working — skipping setup.")
+            needs_oauth = False
+        else:
+            print(f"  🔄 Remote '{REMOTE_NAME}' exists but auth failed — removing and recreating…")
+            run(["rclone", "config", "delete", REMOTE_NAME], check=False, capture_output=True)
+            _create_remote()
+    else:
+        _create_remote()
 
-    # Create the remote with correct settings (blank client_id = rclone's bundled key)
-    print(f"  ⚙️  Creating '{REMOTE_NAME}' remote with Drive scope…")
-    result = run(
-        ["rclone", "config", "create", REMOTE_NAME, "drive",
-         "scope", "drive",
-         "client_id", "",        # blank = use rclone's bundled OAuth app
-         "client_secret", ""],   # blank
-        capture_output=True, text=True, check=False,
-    )
-    if result.returncode != 0:
-        print(f"  ⚠️  Config create warning: {result.stderr.strip()[:200]}")
+    # ── 3. Trigger OAuth browser flow (only if remote was just created) ───────
+    if needs_oauth:
+        print()
+        print("  🌐 Opening browser for Google sign-in…")
+        print("  → Sign in with kyle-nelson@berkeley.edu")
+        print("  → Click 'Allow' when asked about rclone's Drive access")
+        print()
 
-    # ── 3. Trigger OAuth browser flow ────────────────────────────────────────
-    print()
-    print("  🌐 Opening browser for Google sign-in…")
-    print("  → Sign in with kyle-nelson@berkeley.edu")
-    print("  → Click 'Allow' when asked about rclone's Drive access")
-    print()
-
-    # rclone config reconnect handles the OAuth interactively
-    result = run(
-        ["rclone", "config", "reconnect", REMOTE_NAME, "--auto-confirm"],
-        check=False,
-    )
-    if result.returncode != 0:
-        # auto-confirm may not be available on older rclone; fall back
-        run(["rclone", "config", "reconnect", REMOTE_NAME], check=False)
+        # rclone config reconnect handles the OAuth interactively
+        result = run(
+            ["rclone", "config", "reconnect", REMOTE_NAME, "--auto-confirm"],
+            check=False,
+        )
+        if result.returncode != 0:
+            # auto-confirm may not be available on older rclone; fall back
+            run(["rclone", "config", "reconnect", REMOTE_NAME], check=False)
 
     # ── 4. Verify connection ──────────────────────────────────────────────────
     print()

@@ -105,7 +105,12 @@ class GPUPipeline:
         # ---- Background subtractor (CUDA MOG2) ----
         method = cal_cfg["method"]
         if method in ("mog2", "knn"):
-            # CUDA only has MOG2; use it regardless of knn selection
+            if method == "knn":
+                logger.warning(
+                    "CUDA does not support KNN background subtraction — "
+                    "falling back to CUDA MOG2. Switch config to method: mog2 "
+                    "to suppress this warning."
+                )
             self._bg_sub = cv2.cuda.createBackgroundSubtractorMOG2(
                 history=cal_cfg["mog2_history"],
                 varThreshold=cal_cfg["mog2_var_threshold"],
@@ -225,6 +230,14 @@ class GPUPipeline:
 
         binary_matrix = (clean > 0).astype(np.uint8)
         return binary_matrix, frame
+
+    # ------------------------------------------------------------------
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+        return False  # Don't suppress exceptions
 
     # ------------------------------------------------------------------
     def release(self) -> None:

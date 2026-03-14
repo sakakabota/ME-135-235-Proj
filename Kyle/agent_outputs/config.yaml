@@ -56,7 +56,8 @@ display:
   panel_height: 108                # Physical LED panel rows (108x108 = 11,664 LEDs)
   brightness: 128                  # 0-255, for WS2812B
   gpio_data_pin: 13               # ESP32 GPIO for NeoPixel data
-  fps_target: 3                    # WS2812B hard limit: 11,664 LEDs x 30us = ~350ms/frame
+  fps_target: 10                   # Display loop target; WS2812B physical limit ~3fps for 11,664 LEDs
+                                   # Set to 10 for CV processing; ESP32 will drop frames if display lags
 
 # --- LabVIEW IoT Hub ---
 labview:

@@ -17,7 +17,6 @@ Public API (used by main.py):
 import cv2
 import numpy as np
 import logging
-import time
 
 logger = logging.getLogger("me135.cv_pipeline")
 
@@ -174,6 +173,16 @@ class CVPipeline:
         binary_matrix = (resized > 0).astype(np.uint8)
 
         return binary_matrix, frame
+
+    # ------------------------------------------------------------------
+    # Context manager
+    # ------------------------------------------------------------------
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+        return False  # Don't suppress exceptions
 
     # ------------------------------------------------------------------
     # Cleanup

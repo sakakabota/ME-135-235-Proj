@@ -23,6 +23,7 @@ Then set the remote in env or rclone_remote below.
 import json
 import os
 import re
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -198,8 +199,7 @@ def append_to_feature_doc(feature_path: Path, section_text: str):
 
 def rclone_available() -> bool:
     """Check rclone is installed."""
-    result = subprocess.run(["which", "rclone"], capture_output=True)
-    return result.returncode == 0
+    return shutil.which("rclone") is not None
 
 
 def rclone_remote_configured(remote: str) -> bool:
