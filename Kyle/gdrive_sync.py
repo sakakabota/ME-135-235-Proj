@@ -247,13 +247,18 @@ def sync_to_drive(
     proposals: list[dict],
     commit_sha: str,
     repo_root: Path,
+    override_features: list[str] | None = None,
 ) -> dict[str, str]:
     """
     Write feature sections locally and sync to Google Drive.
     Returns {feature: local_path_str} for updated features.
+    Pass override_features to bypass git diff detection (e.g. bootstrap mode).
     """
-    changed_files = get_changed_files(repo_root)
-    features      = detect_features(changed_files)
+    if override_features:
+        features = override_features
+    else:
+        changed_files = get_changed_files(repo_root)
+        features      = detect_features(changed_files)
 
     print(f"\n  📋 Features touched: {', '.join(features)}")
 

@@ -710,6 +710,8 @@ async def main():
     parser = argparse.ArgumentParser(description="ME135 Documentation Agent Swarm")
     parser.add_argument("--pre-push",  action="store_true",
                         help="Non-interactive mode (called by git hook)")
+    parser.add_argument("--bootstrap", action="store_true",
+                        help="v1 pass: document ALL features from scratch, ignoring git diff")
     parser.add_argument("--implement", metavar="PROPOSAL_ID",
                         help="Apply a specific proposal from docs/PENDING_IMPROVEMENTS.md")
     args = parser.parse_args()
@@ -756,12 +758,25 @@ async def main():
     except Exception:
         commit_sha = "unknown"
 
-    changed_files = get_changed_files(REPO_ROOT)
-    features      = detect_features(changed_files)
+    if args.bootstrap:
+        # Bootstrap: treat every known file as changed so all features get v1 docs
+        from gdrive_sync import FEATURE_MAP
+        changed_files = list(FEATURE_MAP.keys())
+        features      = list(set(FEATURE_MAP.values()))
+        git_context   = (
+            "### Bootstrap v1 pass\n"
+            "This is the FIRST documentation run — there is no prior version.\n"
+            "Document the CURRENT state of every feature as v1.\n\n"
+            + git_context
+        )
+    else:
+        changed_files = get_changed_files(REPO_ROOT)
+        features      = detect_features(changed_files)
 
     print(f"  Commit:   {commit_sha}")
     print(f"  Files:    {len(project_files)} source files loaded")
-    print(f"  Features: {', '.join(features)}")
+    print(f"  Features: {', '.join(sorted(features))}")
+    print(f"  Mode:     {'Bootstrap v1' if args.bootstrap else 'Incremental'}")
     print(f"  Output:   docs/")
     print()
 
@@ -810,7 +825,8 @@ async def main():
 
     # ── Sync to Google Drive feature docs ────────────────────────────────────
     drive_urls = sync_to_drive(
-        _report_sections, _proposals, commit_sha, REPO_ROOT
+        _report_sections, _proposals, commit_sha, REPO_ROOT,
+        override_features=features if args.bootstrap else None,
     )
     if drive_urls:
         print()
