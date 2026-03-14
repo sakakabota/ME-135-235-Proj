@@ -3,3 +3,11 @@ __pycache__/
 *.pyo
 .venv/
 .env
+
+# Google Drive auth — never commit these
+gdrive_credentials.json
+.gdrive_token.json
+
+# Local docs DB (binary, not useful in git)
+docs/history.db
+docs/PENDING_IMPROVEMENTS.json

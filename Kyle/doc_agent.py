@@ -30,6 +30,7 @@ from datetime import datetime
 from pathlib import Path
 
 import anthropic
+from gdrive_sync import sync_to_drive, detect_features, get_changed_files
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 
@@ -755,9 +756,13 @@ async def main():
     except Exception:
         commit_sha = "unknown"
 
-    print(f"  Commit:  {commit_sha}")
-    print(f"  Files:   {len(project_files)} source files loaded")
-    print(f"  Output:  docs/")
+    changed_files = get_changed_files(REPO_ROOT)
+    features      = detect_features(changed_files)
+
+    print(f"  Commit:   {commit_sha}")
+    print(f"  Files:    {len(project_files)} source files loaded")
+    print(f"  Features: {', '.join(features)}")
+    print(f"  Output:   docs/")
     print()
 
     # ── Define agents ────────────────────────────────────────────────────────
@@ -802,6 +807,25 @@ async def main():
     for r in all_reports[:20]:
         index_lines.append(f"- [{r.stem}](./{r.name})")
     index_path.write_text("\n".join(index_lines) + "\n", encoding="utf-8")
+
+    # ── Sync to Google Drive feature docs ────────────────────────────────────
+    drive_urls = sync_to_drive(
+        _report_sections, _proposals, commit_sha, REPO_ROOT
+    )
+    if drive_urls:
+        print()
+        print("  🔗 Google Drive feature docs updated:")
+        for feature, url in drive_urls.items():
+            print(f"     {feature}: {url}")
+
+        # Record Drive URLs in SQLite
+        conn_drive = db_connect()
+        for feature, url in drive_urls.items():
+            conn_drive.execute(
+                "INSERT OR IGNORE INTO reports VALUES (?, ?, ?)",
+                (f"{commit_sha}:{feature}", url, datetime.now().isoformat()),
+            )
+        conn_drive.commit()
 
     # ── Interactive improvement review (skip in --pre-push hook) ─────────────
     if not args.pre_push:
