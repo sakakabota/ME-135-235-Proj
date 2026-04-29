@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run vision_fast",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/vision_fast",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb",
+            "preLaunchTask": "Build vision_fast",
+            "osx": {
+                "MIMode": "lldb"
+            }
+        }
+    ]
+}
