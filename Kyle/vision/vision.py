@@ -20,10 +20,11 @@ Setup:
     # ultralytics pulls PyTorch; first model load also downloads yolov8n-seg.pt.
 
 Controls:
-    q       quit
-    s       save current 64x64 frame as silhouette_64.png
-    SPACE   pause / resume
-    [ / ]   decrease / increase YOLO confidence threshold
+    q          quit
+    s          save current 64x64 frame as silhouette_64.png
+    SPACE      pause / resume
+    Conf %     trackbar on the "camera + contours" window sets YOLO
+               confidence threshold (5-95%)
 """
 
 from __future__ import annotations
@@ -65,13 +66,17 @@ def main() -> int:
     cap = open_camera(CAMERA_INDEX)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
 
-    confidence = 0.40
     paused = False
     last_frame: np.ndarray | None = None
     start = time.time()
     n_frames = 0
 
-    print("Press q to quit, s to save 64x64, [ / ] to tweak confidence, SPACE to pause.")
+    preview_win = "camera + contours"
+    cv2.namedWindow(preview_win)
+    cv2.createTrackbar("Conf %", preview_win, 40, 95, lambda _: None)
+    cv2.setTrackbarMin("Conf %", preview_win, 5)
+
+    print("Press q to quit, s to save 64x64, SPACE to pause. Drag the Conf % slider to tweak YOLO confidence.")
 
     while True:
         if not paused:
@@ -84,6 +89,8 @@ def main() -> int:
             frame = last_frame.copy()
 
         h, w = frame.shape[:2]
+
+        confidence = cv2.getTrackbarPos("Conf %", preview_win) / 100.0
 
         # Run YOLO and keep only the person class
         results = model.predict(
@@ -146,7 +153,7 @@ def main() -> int:
             (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2,
         )
 
-        cv2.imshow("camera + contours", preview)
+        cv2.imshow(preview_win, preview)
         cv2.imshow("silhouette", clean)
         cv2.imshow("64x64 pixelated", chunky)
 
@@ -158,10 +165,6 @@ def main() -> int:
             print("saved silhouette_64.png")
         elif key == ord(" "):
             paused = not paused
-        elif key == ord("["):
-            confidence = max(0.05, confidence - 0.05)
-        elif key == ord("]"):
-            confidence = min(0.95, confidence + 0.05)
 
     cap.release()
     cv2.destroyAllWindows()
