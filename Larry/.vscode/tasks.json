@@ -1,0 +1,39 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build vision_fast",
+            "type": "shell",
+            "command": "/usr/bin/clang++",
+            "args": [
+                "-std=c++17",
+                "-O3",
+                "-g",
+                "${workspaceFolder}/vision_fast.cpp",
+                "-o",
+                "${workspaceFolder}/vision_fast",
+                "-I/opt/homebrew/include",
+                "-I/opt/homebrew/include/opencv4",
+                "-L/opt/homebrew/lib",
+                "-lopencv_core",
+                "-lopencv_imgproc",
+                "-lopencv_imgcodecs",
+                "-lopencv_videoio",
+                "-lopencv_highgui",
+                "-lopencv_dnn"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "/opt/homebrew/bin:/usr/bin:/bin"
+                }
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": ["$gcc"],
+            "detail": "Compile vision_fast.cpp with Homebrew OpenCV"
+        }
+    ]
+}
