@@ -1199,3 +1199,160 @@ The codebase demonstrates solid architecture — clean separation between CV pip
 Error handling within modules is mostly good; the gaps are at module boundaries and resource lifecycle management.
 
 ---
+## v6 — 2026-04-30 22:37 — `b3727ee`
+
+### What Changed
+
+## Commit Range: `84333b8` → `b3727ee` (10 commits)
+
+This window captures the project's first real **architectural fork**: two parallel computer vision strategies now coexist, plus sweeping reliability fixes and new collaboration governance.
+
+---
+
+### 🔬 CV Pipeline — Kyle's YOLO Vision Fork (NEW subsystem)
+
+- **`Kyle/vision/vision.py` added** (commit `ac90ef9`, +171 lines)
+  Kyle forked Larry's canonical `vision.py` into the `Kyle/` workspace, replacing the detection engine entirely:
+
+  | Aspect | Larry's pipeline (`cv_pipeline.py`) | Kyle's fork (`vision.py`) |
+  |---|---|---|
+  | **Detection** | Background subtraction (MOG2/KNN) | YOLOv8 instance segmentation |
+  | **Person ID** | Anything that moves = human | Class-aware — only detects people |
+  | **Calibration** | Mandatory (90 warmup + 200 model frames) | None — works from frame 1 |
+  | **Output** | 400×300 → downsampled to 108×108 | 64×64 (direct pixelation target) |
+  | **Dependencies** | OpenCV only | OpenCV + Ultralytics (pulls PyTorch) |
+
+  **Why it matters:** The existing MOG2 pipeline has two known pain points — false positives from non-human motion (a waving curtain triggers detection) and a mandatory empty-room calibration that blocks startup for ~30 seconds. YOLO solves both by design: it knows what a person looks like, no background model needed.
+
+  Key design choices:
+  - Uses `yolov8n-seg.pt` (nano, ~6 MB) — smallest model, viable for real-time on Jetson Orin Nano.
+  - OR's all per-person segmentation masks into a single binary silhouette, then cleans with morphological close + contour filtering — same cleanup philosophy as `cv_pipeline.py`.
+  - Interactive tuning controls (`[`/`]` for confidence threshold, `SPACE` to pause) — this is a prototyping tool, not yet wired to `main.py` or the serial pipeline.
+  - Cross-platform camera backend fallback (AVFoundation → V4L2 → ANY) — works on macOS and Jetson.
+
+  **Not yet integrated:** The 64×64 output cannot use the existing serial protocol (hardcoded for 108×108 / 1,458-byte payloads). `config.yaml` has no YOLO options. This is an experimental branch, not production path.
+
+---
+
+### 📡 Serial Protocol / ESP32 — Unchanged but exposed a gap
+
+- No code changes to `serial_protocol.py` or `esp32_main.cpp`, but the new 64×64 output from Kyle's fork creates a **payload mismatch**: `pack_matrix()` expects (300, 400) or (108, 108) input; 64×64 would require a new framing mode (512 bytes packed vs 1,458).
+
+---
+
+### 🔧 Reliability & Security — 7-Agent Swarm Fixes (commit `84333b8`)
+
+- **14 critic proposals addressed** across the full stack in a single sweep. The commit message references a multi-agent code review that flagged issues spanning:
+  - CV pipeline edge cases
+  - Serial protocol resilience
+  - ESP32 watchdog behavior
+  - Configuration validation
+  
+  This was the largest cross-cutting fix in the project's history — touching every subsystem simultaneously.
+
+---
+
+### 📷 LabVIEW Integration (commit `556ada9`)
+
+- **LabVIEW camera code added** — camera integration for the optional IoT monitoring dashboard. This connects to the `labview` config section (currently `enabled: false` in `config.yaml`). A secondary observation path, not the main display pipeline.
+
+---
+
+### 📋 Collaboration & Governance
+
+- **`CLAUDE.md` added** (commit `e78df3f`) — establishes the Kyle/Larry folder convention. Each collaborator's experimental code lives in their own namespace (`Kyle/`, `Larry/`) to prevent merge conflicts on shared files. This governance doc is what made the vision fork possible without breaking Larry's pipeline.
+
+---
+
+### 📄 Documentation (commits `b3727ee`, `a0389e2`, `13e6112`, `67b3e09`)
+
+- Four auto-generated evolution reports added to `Kyle/docs/`. The latest (`report_2026-04-30_2233.md`, 307 lines) and the comprehensive feature doc (`ME135_General.md`, +627 lines) capture the full system architecture including the new fork-point diagram.
+- `Kyle/docs/README.md` updated with a link index to all reports.
+
+---
+
+### 🚫 What Did NOT Change (notable stability)
+
+- **`main.py` orchestrator** — still only knows about `CVPipeline` and `GPUPipeline`. No integration point for YOLO yet.
+- **`config.yaml`** — no 64×64 display option, no YOLO model path configuration.
+- **`gpu_accelerated.py`** — CUDA MOG2 pipeline untouched; still the production GPU path.
+- **`esp32_main.cpp`** — firmware stable; still expects exactly 1,458-byte payloads.
+
+### Evolution Timeline
+
+### Commit Graph
+
+```mermaid
+gitGraph
+    commit id: "84333b8" tag: "7-agent-fixes" type: HIGHLIGHT
+    commit id: "67b3e09" tag: "v2-report"
+    commit id: "13e6112" tag: "auto-report"
+    commit id: "556ada9" tag: "labview-cam"
+    commit id: "49bf44b" tag: "larry-vision+cpp" type: HIGHLIGHT
+    commit id: "5a9c7ad" tag: "merge"
+    branch kyle-experiments
+    commit id: "e78df3f" tag: "CLAUDE.md"
+    commit id: "ac90ef9" tag: "kyle-yolo-fork" type: HIGHLIGHT
+    commit id: "a0389e2" tag: "auto-report"
+    commit id: "b3727ee" tag: "HEAD"
+```
+
+### Subsystem Touchpoints Per Commit
+
+| Commit | Subsystems | What happened |
+|---|---|---|
+| `84333b8` | 🔬 CV · 📡 Serial · 💾 ESP32 · 📄 Docs | 14-proposal swarm fix — biggest cross-cutting change |
+| `67b3e09` | 📄 Docs | v2 evolution report (security & reliability narrative) |
+| `13e6112` | 📄 Docs | Auto-generated evolution report |
+| `556ada9` | 📷 LabVIEW | Camera integration for IoT dashboard |
+| `49bf44b` | 🔬 CV · ⚡ C++ | Larry's vision pipeline + optimized native companion |
+| `5a9c7ad` | — | Merge commit (no new code) |
+| `e78df3f` | 📋 Governance | CLAUDE.md — Kyle/Larry namespace convention |
+| `ac90ef9` | 🔬 CV (Kyle fork) | **YOLOv8 segmentation pipeline** — new detection paradigm |
+| `a0389e2` | 📄 Docs | Auto-generated evolution report |
+| `b3727ee` | 📄 Docs | Evolution report + 627-line feature doc update |
+
+### Architectural Fork Point
+
+The project now has two parallel detection strategies. The next integration milestone is bridging Kyle's YOLO output to the serial/display pipeline.
+
+```mermaid
+flowchart LR
+    CAM["🎥 Camera<br/>640×480"]
+
+    CAM --> LARRY["Larry Path<br/>MOG2 Background Sub<br/>400×300 → 108×108<br/><i>requires calibration</i>"]
+    CAM --> KYLE["Kyle Path<br/>YOLOv8n-seg<br/>640×480 → 64×64<br/><i>no calibration</i>"]
+
+    LARRY --> SER["📡 Serial Protocol<br/>1,458 B payloads<br/>✅ working"]
+    SER --> ESP["💾 ESP32 → WS2812B<br/>108×108 panel<br/>✅ working"]
+
+    KYLE -.-> GAP["🚧 Integration Gap<br/>• config.yaml needs 64×64 mode<br/>• serial needs 512 B framing<br/>• main.py needs YOLO path"]
+    GAP -.-> FUTURE["❓ 64×64 display<br/>or upscale to 108×108?"]
+
+    style KYLE fill:#fff3cd,stroke:#ffc107
+    style GAP fill:#f8d7da,stroke:#dc3545
+    style FUTURE stroke-dasharray: 5 5
+```
+
+### Velocity & Trajectory
+
+The 10-commit window shows three distinct phases:
+1. **Hardening** (`84333b8`) — systematic reliability fixes across every subsystem
+2. **Feature expansion** (`556ada9`, `49bf44b`) — LabVIEW integration + Larry's vision code landing
+3. **Experimentation** (`e78df3f`, `ac90ef9`) — governance framework enabling parallel R&D
+
+The project is transitioning from "get it working" to "explore better approaches" — a healthy sign of maturity. The key decision ahead: will Kyle's YOLO path replace the MOG2 pipeline, or will both coexist as configurable options?
+
+### Code Health Summary
+
+**Overall Grade: B**
+
+The codebase is well-structured for a university project. Clear separation of concerns (pipeline → protocol → firmware), consistent config-driven architecture, and proper CRC/framing for serial comms. Logging and safety watchdogs are present throughout.
+
+**Critical flaw:** PROTOCOL_SPEC.md documents a 15,000-byte payload while every implementation sends 1,458 bytes. Anyone building from the spec will fail. The `ack_timeout_s` config is dead code, and camera-open failures are swallowed silently in both pipelines.
+
+**Strengths:** GPU/CPU pipeline swap is nearly seamless; CRC-16 implementations match across Python and C++; config.yaml is a genuine single source of truth for tuning parameters; error handling in the main loop (watchdog, serial error counting, graceful shutdown) is solid.
+
+**Gaps:** GPUPipeline breaks the context-manager contract; serial RX buffer isn't flushed before ACK reads; static-median calibration has avoidable memory spikes on constrained hardware.
+
+---
