@@ -572,3 +572,630 @@ The codebase is well-structured with clean separation (CPU pipeline, GPU pipelin
 **Strengths:** CRC-16 implementations match across Python/C++, the GPU pipeline is a clean drop-in replacement for the CPU path, config is centralized, and safety watchdogs exist on both sides of the UART link.
 
 ---
+## v3 — 2026-04-30 22:33 — `ac90ef9`
+
+### What Changed
+
+## Commit Range: `179b802` → `ac90ef9` (10 commits)
+
+### 🔬 CV Pipeline — Kyle's Vision Fork (NEW subsystem)
+
+- **`Kyle/vision/vision.py` added** (commit `ac90ef9`, +171 lines)
+  Kyle forked Larry's canonical `vision.py` (snapshot at `49bf44b`) into the `Kyle/` workspace for independent experimentation. **This is architecturally significant** because it introduces a fundamentally different detection strategy:
+
+  | Aspect | Larry's pipeline (`cv_pipeline.py`) | Kyle's fork (`Kyle/vision/vision.py`) |
+  |---|---|---|
+  | **Detection** | Background subtraction (MOG2/KNN) | YOLOv8 instance segmentation |
+  | **Person ID** | Motion delta (anything that moves) | Class-aware detector (only people) |
+  | **Calibration** | Required (90 warmup + 200 model frames) | None — works from first frame |
+  | **Output size** | 400×300 → downsampled to 108×108 for LED panel | 64×64 (direct pixelation target) |
+  | **Dependency** | OpenCV only | OpenCV + Ultralytics (pulls PyTorch) |
+
+  **Why it matters:** The YOLO-based approach solves two pain points in the original pipeline — (1) false positives from non-human motion and (2) the mandatory calibration step that stalls startup. The 64×64 output suggests Kyle is targeting a smaller display or a different LED matrix than the 108×108 WS2812B panel.
+
+  Key design choices in the fork:
+  - Uses `yolov8n-seg.pt` (nano model, ~6 MB) for speed — appropriate for real-time on a Jetson.
+  - OR's all per-person masks into a single silhouette, then cleans with morphological close + contour filtering — mirrors the same cleanup philosophy as `cv_pipeline.py`.
+  - Interactive controls (`[`/`]` for confidence, `SPACE` to pause, `s` to save) — clearly a prototyping/tuning tool, not yet wired to the serial pipeline.
+  - Cross-platform camera backend fallback (AVFoundation → V4L2 → ANY) — works on macOS dev machines and Jetson alike.
+
+### 📋 Collaboration & Docs
+
+- **`CLAUDE.md` added** (commit `e78df3f`)
+  Establishes the Kyle/Larry folder convention — each collaborator's experimental code lives in their own namespace to prevent merge conflicts on shared files. This is the governance doc that enabled the vision fork.
+
+### 🔧 Infrastructure & Tooling (earlier commits)
+
+- **7-agent swarm fixes** (commits `84333b8`, `67b3e09`, `076089c`)
+  Addressed all 14 critic proposals from a code review pass, covering security and reliability across the entire stack. Evolution report auto-generated.
+
+- **Setup automation** (commit `179b802`)
+  Fixed non-interactive `rclone` configuration and auto-clearing of bad `client_id` values — removing a manual step from onboarding.
+
+- **Larry's vision code + optimized C++** (commit `49bf44b`)
+  The original vision pipeline and performance-optimized C++ companion landed here. This is the snapshot Kyle later forked.
+
+- **LabVIEW camera code** (commit `556ada9`)
+  Camera integration for the LabVIEW IoT dashboard path (the optional monitoring channel in the architecture).
+
+### 🚫 Not Yet Changed
+
+- **Serial protocol** (`serial_protocol.py`, `esp32_main.cpp`): Still hardcoded for 108×108 / 1,458-byte payloads. Kyle's 64×64 output (512 bytes packed) cannot use the existing framing without modification.
+- **`main.py` orchestrator**: No integration point for the YOLO-based pipeline yet — Kyle's fork runs standalone.
+- **`config.yaml`**: No 64×64 output option or YOLO model configuration added.
+
+### Evolution Timeline
+
+```mermaid
+gitGraph
+    commit id: "179b802" tag: "setup-fix" type: NORMAL
+    commit id: "076089c" type: NORMAL
+    commit id: "84333b8" tag: "7-agent-fixes" type: HIGHLIGHT
+    commit id: "67b3e09" type: NORMAL
+    commit id: "13e6112" tag: "auto-report" type: NORMAL
+    commit id: "556ada9" type: NORMAL
+    commit id: "49bf44b" tag: "larry-vision" type: HIGHLIGHT
+    commit id: "5a9c7ad" type: NORMAL
+    branch kyle-experiments
+    commit id: "e78df3f" tag: "CLAUDE.md" type: NORMAL
+    commit id: "ac90ef9" tag: "kyle-vision-fork" type: HIGHLIGHT
+```
+
+### Subsystem touchpoints per commit
+
+| Commit | Subsystems Touched | Summary |
+|---|---|---|
+| `179b802` | 🔧 Setup/Infra | Non-interactive rclone fix |
+| `076089c` | 📄 Docs | Bootstrap mode, override_features fix |
+| `84333b8` | 🔬 CV · 📡 Serial · 💾 ESP32 · 📄 Docs | 14-proposal swarm fix across all subsystems |
+| `67b3e09` | 📄 Docs | v2 evolution report (security & reliability) |
+| `13e6112` | 📄 Docs | Auto-generated evolution report |
+| `556ada9` | 📷 LabVIEW | Camera code for LabVIEW IoT dashboard |
+| `49bf44b` | 🔬 CV · ⚡ C++ | Larry's vision pipeline + optimized native code |
+| `5a9c7ad` | — | Merge commit (no new code) |
+| `e78df3f` | 📋 Governance | CLAUDE.md collaboration convention |
+| `ac90ef9` | 🔬 CV (Kyle fork) | YOLOv8 vision pipeline — new detection paradigm |
+
+### Architectural Trajectory
+
+The project is at a **fork point** — two parallel detection strategies now exist:
+
+```mermaid
+flowchart LR
+    CAM[PS3 Eye / USB Camera]
+    CAM --> LARRY[Larry Path<br/>Background Subtraction<br/>400×300 → 108×108]
+    CAM --> KYLE[Kyle Path<br/>YOLOv8 Segmentation<br/>640×480 → 64×64]
+    LARRY --> SERIAL[Serial Protocol<br/>1,458 B frames]
+    SERIAL --> ESP32[ESP32 + WS2812B<br/>108×108 panel]
+    KYLE -.->|not yet wired| SERIAL2[Serial Protocol<br/>needs 512 B mode]
+    SERIAL2 -.-> ESP32_2[ESP32 + ???<br/>64×64 display]
+
+    style KYLE fill:#fff3cd,stroke:#ffc107
+    style SERIAL2 stroke-dasharray: 5 5
+    style ESP32_2 stroke-dasharray: 5 5
+```
+
+The next integration milestone will be connecting Kyle's YOLO output to the serial pipeline — requiring either a configurable payload size or a new 64×64 display target.
+
+### System Architecture
+
+```mermaid
+flowchart TD
+    %% ── Hardware Layer ──────────────────────────────────────────────
+    subgraph CAM["🎥 PS3 Eye Camera"]
+        C1["Sony OV534 Sensor\n640 × 480 @ 60 fps\nUSB 2.0 · driver: gspca_ov534\nwarmup: 90 frames discarded"]
+    end
+
+    %% ── Jetson Host ─────────────────────────────────────────────────
+    subgraph JETSON["🖥️  NVIDIA Jetson Orin Nano Super — JetPack 6 · CUDA 12.2 · OpenCV 4.8"]
+
+        CFG["📄 config.yaml\n──────────────────\nSINGLE SOURCE OF TRUTH\ncamera · calibration\nprocessing · serial\ndisplay · safety"]
+
+        MAIN["🐍 main.py  [CPU]\n──────────────────\nargparse CLI\nyaml config loader\nSIGINT/SIGTERM handler\nWatchdog 5 s\nFPS limiter → 10 fps target\nConsecutive-error counter\n(shutdown @ 10 errors)"]
+
+        subgraph CVSEL["CV Path Selection  use_gpu: true/false"]
+            direction LR
+            GPU["⚡ gpu_accelerated.py  [GPU]\n──────────────────\nCUDA MOG2 background sub\nGPU Gaussian blur\nGPU morph open + close\ncv2.cuda_GpuMat (pre-alloc)\nCUDA Ampere · 1024 cores\n~2 ms / frame"]
+            CPU["🐌 cv_pipeline.py  [CPU]\n──────────────────\nMOG2 / KNN / static_median\nCPU Gaussian blur\nCPU morph open + close\ncontour filter ≥ 500 px²\n~8 ms / frame"]
+        end
+
+        OUT["binary_matrix\nnp.ndarray (300 × 400)\ndtype uint8 · values {0, 1}\n120,000 bytes (in RAM)"]
+
+        SER["🔌 serial_protocol.py  [CPU]\n──────────────────\ndownsample_to_panel()  400×300 → 108×108\npack_matrix()  bit-pack MSB-first\ncrc16_ccitt()  poly 0x1021, init 0xFFFF\nbuild_packet()  frame assembly\nACK/NAK retry loop  max 3×\nACK timeout  50 ms"]
+
+        PKT["📦 Wire Packet\n──────────────────\n0xAA 0x55  START (2 B)\nLEN_H LEN_L  = 0x05B2 (2 B)\nPAYLOAD  1,458 B\nCRC_H CRC_L  (2 B)\n0x55 0xAA  END (2 B)\n─────────────────\nTotal: 1,466 B/frame"]
+    end
+
+    %% ── ESP32 ──────────────────────────────────────────────────────
+    subgraph ESP["⚡ ESP32-DevKitC  240 MHz dual-core · Arduino / PlatformIO"]
+        RX["🔁 receiveFrame()  [Core 0]\n──────────────────\nSync hunt: 0xAA→0x55\nRead LEN (2 B big-endian)\nRead PAYLOAD (1,458 B)\nRead CRC + END (4 B)\ncrc16_ccitt() verify\nWatchdog 5,000 ms → blank + reset\nRX buffer: 4,096 B"]
+        ACK["↩ ACK/NAK  [Core 0]\n──────────────────\nACK 0x06 → CRC pass\nNAK 0x15 → CRC fail / sync err\nSkip display if backlog ≥ 4 B"]
+        DISP["💡 updateDisplay()  [Core 0]\n──────────────────\nBit-unpack 1,458 B → 11,664 bits\nbit=1 → strip.Color(255,255,255)\nbit=0 → strip.Color(0,0,0)\nstrip.show()  GPIO 13"]
+    end
+
+    %% ── Display ─────────────────────────────────────────────────────
+    subgraph PANEL["💡 WS2812B LED Panel"]
+        LED["108 × 108 = 11,664 LEDs\nAddressable RGB · 800 KHz protocol\nBrightness cap: 128/255  (~50%)\n5 V / 30 A PSU (all-white)\n470 Ω series resistor on DIN\nPhysical limit ~2.9 fps (full refresh)"]
+    end
+
+    %% ── Optional LabVIEW ────────────────────────────────────────────
+    LV["📊 LabVIEW IoT Hub\n192.168.1.100:5020\nTCP · enabled: false\nHeartbeat 2 s"]
+
+    %% ── Edges ───────────────────────────────────────────────────────
+    C1 -- "USB 2.0\n640×480 BGR\n≈ 921 KB/frame\n@ 60 fps" --> MAIN
+    CFG -- "yaml.safe_load()" --> MAIN
+
+    MAIN -- "use_gpu=true\n+ CUDA detected" --> GPU
+    MAIN -- "use_gpu=false\nor CUDA absent" --> CPU
+
+    GPU -- "binary_matrix\n300×400 · 120 KB" --> OUT
+    CPU -- "binary_matrix\n300×400 · 120 KB" --> OUT
+    OUT --> SER
+    SER --> PKT
+
+    PKT -- "UART · 2 Mbaud\n8N1 · 3.3 V logic\nJetson TX → GPIO 16 RX\n1,466 B / 7.3 ms TX" --> RX
+
+    RX -- "ACK 0x06 / NAK 0x15\n1 B · GPIO 17 TX\n→ Jetson RX" --> ACK
+    ACK -- "retry on NAK\nmax 3×" --> SER
+
+    RX -- "payload[1458]\nCRC verified" --> DISP
+    DISP -- "800 KHz NeoPixel\nGPIO 13 → 470 Ω → DIN\n~350 ms strip.show()" --> LED
+
+    DISP -. "TCP heartbeat\n(labview.enabled: false)" .-> LV
+
+    %% ── Styles ──────────────────────────────────────────────────────
+    style GPU fill:#1a6b2a,color:#fff,stroke:#0d3d17
+    style CPU fill:#5a4a00,color:#fff,stroke:#3a3000
+    style JETSON fill:#0d1f3c,color:#cdd,stroke:#4488cc
+    style ESP fill:#3c1a0d,color:#edc,stroke:#cc6644
+    style PANEL fill:#2a0d3c,color:#dce,stroke:#8844cc
+    style CAM fill:#0d2a2a,color:#cee,stroke:#44aaaa
+    style LV fill:#2a2a0d,color:#eec,stroke:#aaaa44
+```
+
+| Segment | Data | Rate |
+|---|---|---|
+| USB (Camera → Jetson) | 640×480 BGR | ≈ 921 KB/frame @ 60 fps |
+| GPU CV path | 640×480 → 400×300 binary | ~2 ms/frame |
+| CPU CV path | 640×480 → 400×300 binary | ~8 ms/frame |
+| Downsample + pack | 400×300 → 108×108 → 1,458 B | < 0.5 ms |
+| UART (Jetson → ESP32) | 1,466 B/frame @ 2 Mbaud | ~7.3 ms/frame |
+| NeoPixel strip.show() | 11,664 LEDs × 24-bit | ~350 ms (2.9 fps physical limit) |
+
+### Data Flow
+
+One complete frame journey — GPU path, nominal ACK case, target 10 fps (100 ms budget).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CAM  as 🎥 PS3 Eye<br/>(640×480 @ 60 fps)
+    participant GPU  as ⚡ GPUPipeline<br/>(Jetson CUDA)
+    participant SER  as 🔌 SerialSender<br/>(serial_protocol.py)
+    participant UART as 〰️ UART Wire<br/>(2 Mbaud · 3.3 V)
+    participant ESP  as ⚡ ESP32<br/>(esp32_main.cpp)
+    participant LED  as 💡 WS2812B Panel<br/>(108×108 LEDs)
+
+    Note over CAM,LED: ── Frame N begins (t = 0 ms) ──
+
+    CAM  ->> GPU  : cap.read() → BGR frame<br/>640×480 × 3 B = 921,600 B<br/>via USB 2.0 (≈ 0.5 ms DMA)
+
+    Note over GPU: t ≈ 0.5 ms
+
+    GPU  ->> GPU  : _gpu_frame.upload(frame)<br/>921,600 B → VRAM<br/>~0.3 ms (102 GB/s LPDDR5)
+
+    GPU  ->> GPU  : cv2.cuda.cvtColor BGR→GRAY<br/>921,600 B → 307,200 B<br/>~0.1 ms (Ampere CUDA)
+
+    GPU  ->> GPU  : GaussianFilter.apply()<br/>kernel 5×5 · CV_8UC1<br/>~0.1 ms on GPU
+
+    GPU  ->> GPU  : bg_sub.apply() — CUDA MOG2<br/>foreground mask 307,200 B<br/>~0.5 ms
+
+    GPU  ->> GPU  : morphOpen.apply() + morphClose.apply()<br/>ellipse kernel 5×5<br/>~0.2 ms
+
+    GPU  ->> GPU  : cv2.cuda.resize 640×480→400×300<br/>+ threshold → {0,1}<br/>~0.1 ms
+
+    GPU  ->> GPU  : _gpu_fg.download()<br/>binary_matrix (300,400) uint8<br/>120,000 B ← VRAM
+
+    Note over GPU: t ≈ 2 ms total GPU processing
+
+    GPU  ->> SER  : binary_matrix<br/>np.ndarray (300×400) uint8<br/>120,000 B
+
+    Note over SER: t ≈ 2 ms
+
+    SER  ->> SER  : downsample_to_panel()<br/>cv2.resize INTER_NEAREST<br/>400×300 → 108×108<br/>11,664 B · ~0.1 ms
+
+    SER  ->> SER  : np.packbits() MSB-first<br/>11,664 B → 1,458 B payload<br/>~0.05 ms
+
+    SER  ->> SER  : crc16_ccitt(payload)<br/>poly 0x1021, init 0xFFFF<br/>over 1,458 B · ~0.1 ms
+
+    SER  ->> SER  : _build_packet()<br/>0xAA55 + LEN(2B) + 1458B + CRC(2B) + 0x55AA<br/>= 1,466 B total
+
+    Note over SER: t ≈ 2.4 ms  packet ready
+
+    SER  ->> UART : ser.write(packet)<br/>1,466 bytes<br/>@ 200,000 B/s
+
+    Note over UART: TX duration ≈ 7.33 ms<br/>(1,466 B ÷ 200,000 B/s)
+
+    UART ->> ESP  : last byte received<br/>RX buffer: 4,096 B<br/>HardwareSerial1 GPIO 16
+
+    Note over ESP: t ≈ 9.7 ms
+
+    ESP  ->> ESP  : crc16_ccitt(payload, 1458)<br/>compare vs received CRC<br/>~0.3 ms (240 MHz)
+
+    alt CRC PASS
+        ESP  ->> UART : write(ACK_BYTE = 0x06)<br/>1 byte · < 0.1 ms
+        UART ->> SER  : ACK (0x06)<br/>within 50 ms timeout window
+        Note over SER: frames_acked++<br/>consecutive_errors = 0
+        ESP  ->> ESP  : updateDisplay()<br/>unpack 1,458 B → 11,664 bits<br/>set each NeoPixel color<br/>~1 ms (bit ops)
+        ESP  ->> LED  : strip.show()<br/>800 KHz WS2812B protocol<br/>11,664 LEDs × 24 bit = 279,936 bit<br/>≈ 350 ms wire time
+        LED  -->> LED : 11,664 LEDs illuminate<br/>white = human · off = background
+    else CRC FAIL
+        ESP  ->> UART : write(NAK_BYTE = 0x15)<br/>1 byte
+        UART ->> SER  : NAK (0x15)
+        Note over SER: frames_naked++<br/>retry attempt 2 of 3<br/>re-send same 1,466 B packet
+    end
+
+    Note over CAM,LED: ── Frame N complete (Jetson side ≈ 10 ms) ──<br/>── LED panel update ≈ 350 ms (strips frame drops to ~2.9 fps) ──
+
+    Note over SER,ESP: Frame rate limiter: main.py sleeps<br/>max(0, 100ms − proc_time)<br/>to hold 10 fps target
+```
+
+### Byte-Count Summary per Frame
+
+| Step | Input | Output | Δ Size | Time (GPU path) |
+|---|---|---|---|---|
+| Camera capture | — | 640×480×3 BGR | **921,600 B** | ~0.5 ms |
+| Upload to VRAM | 921,600 B | GpuMat (VRAM) | = | ~0.3 ms |
+| BGR → Gray | 921,600 B | 307,200 B | −67% | ~0.1 ms |
+| Blur + BG sub | 307,200 B | 307,200 B mask | = | ~0.6 ms |
+| Morph + resize + threshold | 307,200 B | 120,000 B | −61% | ~0.3 ms |
+| VRAM download | GpuMat | 120,000 B RAM | = | ~0.2 ms |
+| Downsample (400×300→108×108) | 120,000 B | 11,664 B | −90% | ~0.1 ms |
+| Bit-pack | 11,664 B | **1,458 B** | −87.5% | ~0.05 ms |
+| Framing + CRC | 1,458 B | **1,466 B** | +8 B | ~0.1 ms |
+| UART TX | 1,466 B | wire | — | **~7.3 ms** |
+| ESP32 CRC verify | 1,458 B | pass/fail | — | ~0.3 ms |
+| NeoPixel strip.show() | 1,458 B | 279,936 bits | × 192 | **~350 ms** |
+
+> **Bottleneck:** `strip.show()` at 800 KHz serialises 279,936 bits for 11,664 LEDs — physically limiting display refresh to **~2.9 fps** regardless of upstream pipeline speed. The ESP32 implements a skip-display fast-path when the RX buffer shows a queued frame.
+
+### Module Dependency Graph
+
+```mermaid
+graph TD
+    %% ══════════════════════════════════════════════
+    %% RUNTIME PIPELINE  (agent_outputs/)
+    %% ══════════════════════════════════════════════
+
+    subgraph RUNTIME["🚀 Runtime Pipeline  (agent_outputs/)"]
+        direction TB
+
+        MAIN["main.py\n──────────────────────\n+ main()\n+ load_config(path) → dict\n+ validate_config(cfg)\n+ _signal_handler()\n─\nCLI: --config --no-serial\n     --show-preview"]
+
+        subgraph CVMOD["CV Modules (strategy pattern)"]
+            direction LR
+            CVPIPE["cv_pipeline.py\n──────────────────────\nclass CVPipeline\n  __init__(config)\n  calibrate() → None\n  process_frame()\n    → (ndarray|None,\n       ndarray|None)\n  release() → None\n─\nMethods: MOG2/KNN/median\n~8 ms/frame  [CPU]"]
+
+            GPUPIPE["gpu_accelerated.py\n──────────────────────\nclass GPUPipeline\n  __init__(config)\n  calibrate() → None\n  process_frame()\n    → (ndarray|None,\n       ndarray|None)\n  release() → None\n─\nCUDA_AVAILABLE: bool  ← module flag\nMethods: CUDA MOG2\n~2 ms/frame  [GPU]"]
+        end
+
+        SERPROT["serial_protocol.py\n──────────────────────\nclass SerialSender\n  __init__(config)\n  send_frame(matrix) → bool\n  close() → None\n─\ndef crc16_ccitt(data, init)\ndef downsample_to_panel(m)\ndef pack_matrix(m) → bytes\ndef unpack_matrix(b) → ndarray\n─\nConst: PANEL_ROWS=108, PANEL_COLS=108\n       PAYLOAD_BYTES=1458\n       FRAME_START=0xAA55\n       ACK=0x06, NAK=0x15"]
+
+        CFGYAML["config.yaml\n──────────────────────\n§ camera\n§ calibration\n§ processing  (use_gpu)\n§ serial       (baud: 2M)\n§ display      (108×108)\n§ labview\n§ safety"]
+    end
+
+    %% ══════════════════════════════════════════════
+    %% FIRMWARE  (agent_outputs/firmware)
+    %% ══════════════════════════════════════════════
+
+    subgraph FW["⚡ Firmware  (agent_outputs/)"]
+        CPP["esp32_main.cpp\n──────────────────────\nvoid setup()\nvoid loop()\nRxResult receiveFrame()\nvoid updateDisplay()\nuint16_t crc16_ccitt()\n─\nconst: SERIAL_BAUD=2000000\n       PAYLOAD_BYTES=1458\n       LED_COUNT=11664"]
+        INI["platformio.ini\n──────────────────────\nplatform: espressif32\nboard: esp32dev\nframework: arduino\nlib_deps: Adafruit NeoPixel\nbuild_flags:\n  CORE_DEBUG_LEVEL=3\n  CONFIG_UART_ISR_IN_IRAM=1"]
+    end
+
+    %% ══════════════════════════════════════════════
+    %% ORCHESTRATION  (Kyle/ root)
+    %% ══════════════════════════════════════════════
+
+    subgraph ORCH["🤖 Agent Swarm  (Kyle/ root)"]
+        direction TB
+        ORCHPY["orchestrator.py\n──────────────────────\nasync run_agent()\nasync main()\nexecute_tool()\n─\nAgents: cv_agent, gpu_agent\n  serial_agent, firmware_agent\n  config_agent, docs_agent\n  readme_agent  (7 total)\n─\nModels: opus-4-6 (arch)\n        sonnet-4-6 (code)"]
+
+        DOCAGENT["doc_agent.py\n──────────────────────\nasync run_agent()\nasync main()\ndb_connect() → Connection\ndb_save_proposals()\ndb_record_decision()\ncollect_project_files()\nget_git_context()\n─\nPersonalities:\n  HISTORIAN · ARCHITECT · CRITIC\n─\nDB: Kyle/docs/history.db\n─\nModels: opus-4-6 (think)\n        sonnet-4-6 (write)"]
+
+        GSYNC["gdrive_sync.py\n──────────────────────\ndetect_features(files)\nget_changed_files(repo)\nsync_to_drive(sections, props)\nappend_to_feature_doc()\ncompose_feature_section()\n─\nFeature map: 17 files → 6 features\nrclone remote: me135drive"]
+
+        GSETUP["gdrive_setup.py\n──────────────────────\nmain()\n_create_remote()\n─\nrclone OAuth flow\nDrive folder: ME135 Feature Reports"]
+    end
+
+    %% ══════════════════════════════════════════════
+    %% THIRD-PARTY  (pip / system)
+    %% ══════════════════════════════════════════════
+
+    subgraph THIRD["📦 Third-Party Dependencies"]
+        direction LR
+        CV2["cv2\n(OpenCV 4.8)\n+ cv2.cuda  [GPU]"]
+        NP["numpy ≥ 1.26"]
+        YAML["pyyaml ≥ 6.0"]
+        PYSER["pyserial ≥ 3.5"]
+        ANTHRO["anthropic ≥ 0.40\n(Claude API)"]
+        NEO["Adafruit_NeoPixel\n^1.12.0  [C++]"]
+        RCLONE["rclone\n(subprocess)\nGoogle Drive sync"]
+    end
+
+    %% ══════════════════════════════════════════════
+    %% EDGES — runtime imports
+    %% ══════════════════════════════════════════════
+
+    MAIN -- "import CVPipeline" --> CVPIPE
+    MAIN -- "import GPUPipeline\nimport CUDA_AVAILABLE" --> GPUPIPE
+    MAIN -- "import SerialSender" --> SERPROT
+    MAIN -- "yaml.safe_load()" --> CFGYAML
+    MAIN -- "import cv2\n(preview window)" --> CV2
+    MAIN -- "import numpy" --> NP
+    MAIN -- "import yaml" --> YAML
+
+    CVPIPE -- "import cv2" --> CV2
+    CVPIPE -- "import numpy" --> NP
+
+    GPUPIPE -- "import cv2\nimport cv2.cuda" --> CV2
+    GPUPIPE -- "import numpy" --> NP
+    GPUPIPE -. "fallback noted\n(not hard import)" .-> CVPIPE
+
+    SERPROT -- "import cv2\n(resize only)" --> CV2
+    SERPROT -- "import numpy\nnp.packbits()" --> NP
+    SERPROT -- "import serial" --> PYSER
+
+    %% ── firmware ──
+    CPP -- "build dependency" --> NEO
+    INI -- "configures build of" --> CPP
+
+    %% ── orchestration ──
+    ORCHPY -- "import anthropic" --> ANTHRO
+    DOCAGENT -- "import anthropic" --> ANTHRO
+    DOCAGENT -- "from gdrive_sync import\nsync_to_drive\ndetect_features\nget_changed_files" --> GSYNC
+    GSYNC -- "subprocess rclone" --> RCLONE
+    GSETUP -- "subprocess rclone" --> RCLONE
+
+    %% ── config feeds both orchestration + runtime ──
+    CFGYAML -. "read by orchestrator\nas PROJECT_CONTEXT" .-> ORCHPY
+
+    %% ══════════════════════════════════════════════
+    %% STYLES
+    %% ══════════════════════════════════════════════
+    style MAIN fill:#0d2a4a,color:#cde,stroke:#4499dd
+    style CVPIPE fill:#1a3a1a,color:#cec,stroke:#44aa44
+    style GPUPIPE fill:#1a4a1a,color:#cfc,stroke:#44cc44
+    style SERPROT fill:#3a2a0d,color:#edc,stroke:#cc8833
+    style CFGYAML fill:#2a2a2a,color:#ddd,stroke:#888
+    style CPP fill:#3a1a0d,color:#ecc,stroke:#cc5533
+    style INI fill:#3a1a0d,color:#ecc,stroke:#cc5533
+    style ORCHPY fill:#2a0d3a,color:#dce,stroke:#9944cc
+    style DOCAGENT fill:#2a0d3a,color:#dce,stroke:#9944cc
+    style GSYNC fill:#2a1a0d,color:#edc,stroke:#cc9922
+    style GSETUP fill:#2a1a0d,color:#edc,stroke:#cc9922
+    style CV2 fill:#1a1a3a,color:#ccd,stroke:#4444aa
+    style NP fill:#1a1a3a,color:#ccd,stroke:#4444aa
+    style ANTHRO fill:#1a1a3a,color:#ccd,stroke:#4444aa
+```
+
+### Class Interface Boundaries
+
+```mermaid
+classDiagram
+    class CVPipeline {
+        -VideoCapture cap
+        -BackgroundSubtractor bg_sub
+        -int out_w, out_h
+        -bool _calibrated
+        -str _method
+        +__init__(config: dict)
+        +calibrate() None
+        +process_frame() tuple[ndarray, ndarray]
+        +release() None
+    }
+
+    class GPUPipeline {
+        -VideoCapture cap
+        -cuda_MOG2 _bg_sub
+        -cuda_GpuMat _gpu_frame
+        -GaussianFilter _gauss_filter
+        -MorphologyFilter _morph_open
+        -MorphologyFilter _morph_close
+        -bool _calibrated
+        +__init__(config: dict)
+        +calibrate() None
+        +process_frame() tuple[ndarray, ndarray]
+        +release() None
+    }
+
+    class SerialSender {
+        -Serial _ser
+        -int _max_retries
+        -float _ack_timeout
+        +frames_sent int
+        +frames_acked int
+        +frames_naked int
+        +__init__(config: dict)
+        +send_frame(matrix: ndarray) bool
+        +close() None
+        -_build_packet(payload: bytes) bytes
+        -_wait_ack() bool
+    }
+
+    class main {
+        <<module>>
+        +load_config(path) dict
+        +validate_config(cfg) None
+        +main() None
+    }
+
+    CVPipeline ..|> PipelineInterface : implements
+    GPUPipeline ..|> PipelineInterface : implements
+
+    class PipelineInterface {
+        <<interface>>
+        +calibrate() None
+        +process_frame() tuple
+        +release() None
+    }
+
+    main --> PipelineInterface : uses (strategy)
+    main --> SerialSender : uses
+    main ..> CVPipeline : instantiates if CPU
+    main ..> GPUPipeline : instantiates if GPU
+```
+
+> **Strategy Pattern:** `main.py` holds a reference typed to the shared `PipelineInterface` — `CVPipeline` and `GPUPipeline` are swapped transparently at startup based on `config.processing.use_gpu` and CUDA availability. `SerialSender` is a separate, always-CPU component that never touches the CV path.
+
+### Code Health Summary
+
+**Overall Grade: B−**
+
+The codebase is well-structured for a university project: clear separation of concerns (CV pipeline / serial protocol / firmware / orchestration), consistent APIs between CPU and GPU paths, proper use of CRC-16 with matching implementations in Python and C++, and a single-source-of-truth config.yaml.
+
+**Critical issues:** The protocol specification documents a 15,000-byte payload while the actual implementation transmits 1,458 bytes — anyone building from the spec will fail. The ESP32 firmware busy-loops without yielding to FreeRTOS, risking watchdog resets under real operating conditions.
+
+**Reliability gaps:** Camera resources leak on constructor failure, serial writes aren't flushed before expecting ACK responses, and calibration warmup silently ignores dead cameras. Subprocess calls throughout the tooling lack timeouts.
+
+**Bright spots:** Clean config validation, graceful signal handling, context-manager support, and well-documented module APIs. The architecture is sound; the bugs are in edge-case handling.
+
+---
+## v4 — 2026-04-30 22:33 — `ac90ef9`
+
+### What Changed
+
+## v2 — 2026-04-30 — Commits `179b802` → `ac90ef9`
+
+This batch of commits traces a clear arc: **infrastructure fixes → systematic hardening → parallel CV experimentation**. The project now has two competing detection philosophies living side by side.
+
+---
+
+### CV Pipeline — Kyle forks vision with YOLOv8 (`ac90ef9`)
+
+The most architecturally significant change. Kyle copied Larry's `vision.py` (snapshot at `49bf44b`) into `Kyle/vision/vision.py` and replaced the detection engine:
+
+- **Detection method swap**: The canonical pipeline (`agent_outputs/cv_pipeline.py`) uses **MOG2 background subtraction** — a classical approach that needs a person-free calibration phase (200 frames) and degrades when the camera moves or lighting shifts. Kyle's fork uses **YOLOv8 instance segmentation** (`yolov8n-seg.pt`, the 6 MB nano model), which detects "person" (COCO class 0) with per-instance masks. **No calibration needed — works on frame one.**
+- **Output resolution changed**: Canonical produces **400×300** (downsampled to 108×108 for the LED panel). Kyle outputs **64×64**, suggesting a different target resolution or lower-bandwidth experiment.
+- **Multi-backend camera open**: `open_camera()` tries AVFoundation → V4L2 → generic, making the script portable across macOS and Linux. The canonical pipeline only calls `cv2.VideoCapture(device_index)`.
+- **Interactive controls**: Pause/resume (SPACE), snapshot save (`s`), live confidence threshold tuning (`[`/`]`). The canonical `main.py` is a headless production loop with no interactive controls.
+- **Morphological cleanup retained**: Both pipelines share the same noise-removal strategy — `MORPH_CLOSE` with a 5×5 elliptical kernel, contour-area filtering. Kyle's minimum area is 0.2% of frame area (relative); canonical uses a fixed 500 px² threshold.
+- **No serial integration**: Kyle's script is purely visual (three `cv2.imshow` windows). It does not produce the bit-packed UART frames that the ESP32 expects. This is an experiment, not a replacement — yet.
+
+**Why it matters**: If YOLO proves fast enough on the Jetson Orin Nano (~30 fps for the nano model), it could eliminate the fragile calibration step entirely, making the system robust to camera repositioning and lighting changes.
+
+---
+
+### Project Governance (`e78df3f`)
+
+- **`CLAUDE.md` added**: Establishes a folder-based collaboration convention — Kyle and Larry each work in their own directory, preventing accidental overwrites. Claude (AI assistant) is acknowledged as co-author via `Co-Authored-By` trailers.
+
+---
+
+### Upstream Vision & C++ Code (`49bf44b`)
+
+- **Larry's canonical vision pipeline and optimized C++ code landed**. This is the commit Kyle forked from — the production baseline with MOG2 detection, GPU-accelerated path, and full serial protocol integration.
+
+---
+
+### LabVIEW Camera Integration (`556ada9`)
+
+- **LabVIEW camera monitoring code added**. Establishes the optional TCP dashboard path (config: `192.168.1.100:5020`) for system health monitoring alongside the primary CV→UART→LED pipeline.
+
+---
+
+### Hardening Sweep — 7-Agent Swarm (`84333b8`, `67b3e09`, `13e6112`)
+
+- **14 critic proposals resolved** in a single systematic pass: security hardening, reliability fixes, and documentation improvements across all subsystems.
+- **Evolution reports auto-generated** with a new `--bootstrap` mode and `override_features` bug fix in the doc generation tooling (`076089c`).
+
+---
+
+### Infrastructure Fixes (`179b802`)
+
+- **rclone Google Drive config**: Non-interactive setup, auto-clears bad `client_id` entries. Fixes a first-run failure where stale OAuth credentials blocked automated sync.
+
+---
+
+### Two Parallel CV Philosophies Now Coexist
+
+| Dimension | Canonical (`agent_outputs/`) | Kyle's Fork (`Kyle/vision/`) |
+|---|---|---|
+| Detection | Background subtraction (MOG2/KNN) | YOLOv8 instance segmentation |
+| Calibration | Required (200 empty-scene frames) | None (model-based) |
+| Output size | 400×300 → 108×108 | 64×64 |
+| Hardware target | Jetson → ESP32 → LED panel | Standalone USB camera preview |
+| Serial protocol | Full UART framing + CRC + ACK/NAK | Not integrated |
+| Maturity | Production-ready | Experimental sandbox |
+
+### Evolution Timeline
+
+## Commit History — Infrastructure → Hardening → CV Experimentation
+
+```mermaid
+gitGraph
+    commit id: "179b802" tag: "v0.1-infra" type: HIGHLIGHT
+    commit id: "076089c"
+    commit id: "84333b8"
+    commit id: "67b3e09"
+    commit id: "13e6112"
+    commit id: "556ada9"
+    commit id: "49bf44b" tag: "Larry-vision"
+    commit id: "5a9c7ad"
+    branch kyle-experiments
+    commit id: "e78df3f"
+    commit id: "ac90ef9" tag: "HEAD" type: HIGHLIGHT
+```
+
+### Subsystem Map Per Commit
+
+| Commit | Subsystems Touched | Summary |
+|--------|--------------------|---------|
+| `179b802` | 🔧 Setup / GDrive | Non-interactive rclone config, fix bad `client_id` |
+| `076089c` | 📄 Docs tooling | `--bootstrap` mode for doc gen, `override_features` fix |
+| `84333b8` | 🔧 All subsystems | 7-agent swarm resolves all 14 critic proposals (security + reliability) |
+| `67b3e09` | 📄 Docs | v2 evolution report — security & reliability narrative |
+| `13e6112` | 📄 Docs | Auto-generated evolution report `[skip ci]` |
+| `556ada9` | 📷 LabVIEW | LabVIEW camera integration code added |
+| `49bf44b` | 📷 CV / 🔌 ESP32 / ⚙️ C++ | Larry's vision code + optimized C++ — **the baseline Kyle forked** |
+| `5a9c7ad` | 🔀 Merge | Merge remote `main` |
+| `e78df3f` | 📜 Governance | `CLAUDE.md` — Kyle/Larry folder convention established |
+| `ac90ef9` | 📷 CV Pipeline (Kyle) | YOLOv8 segmentation fork → `Kyle/vision/vision.py` |
+
+### Phase Narrative
+
+```mermaid
+timeline
+    title ME135 Project Phases
+    section Phase 1 — Infrastructure
+        GDrive sync automation : 179b802
+        Doc generation tooling : 076089c
+    section Phase 2 — Hardening
+        14 critic proposals fixed : 84333b8
+        Security evolution report : 67b3e09
+        Auto-generated docs      : 13e6112
+    section Phase 3 — Core Development
+        LabVIEW camera integration : 556ada9
+        Larry vision + C++ baseline : 49bf44b
+    section Phase 4 — Experimentation
+        Collaboration convention   : e78df3f
+        Kyle forks vision with YOLO : ac90ef9
+```
+
+### What Comes Next?
+
+The project has reached a **decision fork**: two detection strategies now compete in the repo. The next critical milestone will be either (a) Kyle proves YOLO is fast enough on the Jetson and integrates serial output, triggering a merge back into the canonical pipeline, or (b) background subtraction stays as the production path and Kyle's fork remains a research sandbox. The 64×64 output resolution in Kyle's script also hints at a possible second display target or bandwidth experiment that hasn't been discussed yet.
+
+### Code Health Summary
+
+**Overall Grade: B−**
+
+The codebase demonstrates solid architecture — clean separation between CV pipeline, serial protocol, ESP32 firmware, and orchestration layers. Config-driven design via a single `config.yaml` is excellent. The serial protocol with CRC-16 and ACK/NAK flow control is well-specified.
+
+**Critical issues** drag the grade down: (1) an import mismatch (`sync_to_drive` vs `sync_features_to_drive`) likely crashes the documentation agent at startup, (2) the ESP32 firmware spin-loops without `yield()` will trigger watchdog resets under normal operation, and (3) neither CV pipeline verifies the camera actually opened, making failures hard to diagnose.
+
+**Design gaps**: `GPUPipeline` claims API-compatibility with `CVPipeline` but lacks `__enter__`/`__exit__`, and `main.py` doesn't use context managers, risking resource leaks. The serial sender doesn't flush stale bytes before writes, causing phantom NAKs.
+
+Error handling within modules is mostly good; the gaps are at module boundaries and resource lifecycle management.
+
+---
