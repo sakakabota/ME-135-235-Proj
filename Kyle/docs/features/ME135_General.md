@@ -1356,3 +1356,79 @@ The codebase is well-structured for a university project. Clear separation of co
 **Gaps:** GPUPipeline breaks the context-manager contract; serial RX buffer isn't flushed before ACK reads; static-median calibration has avoidable memory spikes on constrained hardware.
 
 ---
+## v7 — 2026-04-30 23:05 — `1d051ee`
+
+### What Changed
+
+## Commit `1d051ee` — Kyle's Vision: Confidence Slider Replaces Keyboard Controls
+
+**Subsystem: Kyle/vision (YOLO-based CV experiment)**
+
+- **Replaced `[` / `]` keyboard shortcuts with a GUI trackbar slider** (`Kyle/vision/vision.py`).
+  The old workflow required the user to tap bracket keys to nudge the YOLO confidence threshold by ±5%. The new approach adds a draggable "Conf %" trackbar directly on the "camera + contours" OpenCV window (range 5–95%, default 40%).
+  - *Why it matters:* A trackbar gives immediate visual feedback of the current value, eliminates the need to remember keyboard shortcuts, and mirrors the pattern already used in `dissipation.py` — keeping the codebase idiomatically consistent.
+
+- **Confidence variable moved from top-of-loop constant to per-frame read.**
+  Previously `confidence = 0.40` was set once before the loop and mutated by key events. Now the value is read fresh each frame via `cv2.getTrackbarPos("Conf %", preview_win) / 100.0`, right before `model.predict()`.
+  - *Why it matters:* The slider is the single source of truth for confidence — no mutable state to drift out of sync with the UI.
+
+- **Window name extracted into `preview_win` variable.**
+  The string `"camera + contours"` was hardcoded in two places (`cv2.imshow` and the implicit `namedWindow`). It now lives in a single `preview_win` local, reducing copy-paste risk.
+
+- **Docstring controls table updated** to document the trackbar instead of the removed `[ / ]` keys, and column alignment was cleaned up.
+
+**Subsystem: Docs (auto-generated)**
+
+- Three auto-generated evolution report commits (`a0389e2`, `b3727ee`, `a2b44d1`) were produced by the CI doc agent — no human-authored content changes.
+
+**Earlier context (from recent history, outside this diff window):**
+
+| Commit | Subsystem | Summary |
+|--------|-----------|---------|
+| `ac90ef9` | Kyle/vision | Forked `Larry/vision.py` into Kyle's workspace for independent YOLO experiments |
+| `e78df3f` | Docs | Added `CLAUDE.md` establishing Kyle/Larry collaboration conventions |
+| `49bf44b` | Shared/vision + ESP32 | New vision code and optimized C++ firmware |
+| `556ada9` | LabVIEW | LabVIEW camera integration code added |
+
+### Evolution Timeline
+
+```mermaid
+gitGraph
+   commit id: "556ada9" tag: "LabVIEW" type: NORMAL
+   commit id: "13e6112" type: NORMAL
+   commit id: "49bf44b" tag: "Vision+CPP" type: HIGHLIGHT
+   commit id: "5a9c7ad" tag: "Merge" type: NORMAL
+   commit id: "e78df3f" tag: "CLAUDE.md" type: NORMAL
+   commit id: "ac90ef9" tag: "Kyle fork" type: HIGHLIGHT
+   commit id: "a0389e2" type: NORMAL
+   commit id: "b3727ee" type: NORMAL
+   commit id: "a2b44d1" type: NORMAL
+   commit id: "1d051ee" tag: "Trackbar" type: HIGHLIGHT
+```
+
+### Subsystem Touch Map
+
+| Commit | CV Pipeline | Kyle/vision | ESP32 / C++ | LabVIEW | Docs |
+|--------|:-----------:|:-----------:|:-----------:|:-------:|:----:|
+| `556ada9` | | | | ● | |
+| `49bf44b` | ● | | ● | | |
+| `5a9c7ad` | | | | | |
+| `e78df3f` | | | | | ● |
+| `ac90ef9` | | ● | | | |
+| `1d051ee` | | ● | | | |
+
+**Reading the trajectory:** The project started with shared infrastructure (vision pipeline, optimized C++ firmware, LabVIEW integration). After the merge at `5a9c7ad`, Kyle forked the vision code for YOLO-segmentation experiments (`ac90ef9`) and has been iterating on UX refinements — the latest commit (`1d051ee`) swaps keyboard-driven confidence tuning for a proper GUI trackbar, signaling a shift toward demo-ready polish.
+
+### Code Health Summary
+
+**Overall Grade: B**
+
+This is a well-structured embedded CV project with clean separation between CPU/GPU pipelines, serial protocol, and firmware. The code is readable, well-documented, and demonstrates solid engineering intent (CRC-16 verification, watchdog timers, config-driven design, context managers).
+
+**Strengths:** Single-source-of-truth config, protocol spec parity between Python and C++, graceful GPU→CPU fallback, defensive foreground-overflow detection.
+
+**Critical gaps:** The serial retry path has two compounding bugs (dead ACK timeout + no RX flush) that will degrade real-time frame delivery under any packet loss. The main loop lacks `try/finally`, so any exception permanently locks the camera device. Both CV pipelines silently swallow 90 failed warmup reads before reporting a camera error.
+
+**Minor concerns:** GPU/CPU pipeline behavioral divergence on shadow pixels, unused ESP32 RAM allocation, no file-write locking in the orchestrator, and a blocking `input()` that prevents headless deployment.
+
+---
