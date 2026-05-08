@@ -131,9 +131,9 @@ def collect_project_files() -> dict[str, str]:
     files: dict[str, str] = {}
     globs = [
         "*.py", "*.md", "*.txt", "*.yaml",
-        "agent_outputs/*.py", "agent_outputs/*.md",
-        "agent_outputs/*.cpp", "agent_outputs/*.yaml",
-        "agent_outputs/*.ini",
+        "vision/*.py", "vision/*.md", "vision/*.txt",
+        "firmware/**/*.cpp", "firmware/**/*.h", "firmware/**/*.ini",
+        "firmware/**/*.md",
     ]
     for pattern in globs:
         for f in sorted(PROJECT_ROOT.glob(pattern)):
@@ -182,7 +182,8 @@ TOOLS = [
         "name": "read_source",
         "description": (
             "Read a project source file. Pass the relative path from Kyle/ "
-            "(e.g. 'agent_outputs/cv_pipeline.py'). Returns file content up to 8 KB."
+            "(e.g. 'vision/vision.py' or 'firmware/me135_led_pot/src/main.cpp'). "
+            "Returns file content up to 8 KB."
         ),
         "input_schema": {
             "type": "object",

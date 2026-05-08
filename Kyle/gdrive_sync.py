@@ -44,22 +44,16 @@ RCLONE_DRIVE_FOLDER = os.environ.get("RCLONE_DRIVE_FOLDER", "ME135 Feature Repor
 # ─── Feature Map ──────────────────────────────────────────────────────────────
 
 FEATURE_MAP: dict[str, str] = {
-    "cv_pipeline.py":             "Computer Vision Pipeline",
-    "gpu_accelerated.py":         "Computer Vision Pipeline",
-    "serial_protocol.py":         "Serial Communication Protocol",
-    "PROTOCOL_SPEC.md":           "Serial Communication Protocol",
-    "esp32_main.cpp":             "ESP32 Firmware",
-    "platformio.ini":             "ESP32 Firmware",
-    "main.py":                    "System Integration",
-    "config.yaml":                "System Integration",
-    "PROJECT_README.md":          "System Integration",
-    "hardware_recommendation.md": "Hardware & Platform",
-    "SETUP.md":                   "Hardware & Platform",
-    "requirements.txt":           "Hardware & Platform",
-    "orchestrator.py":            "Agent Swarm",
-    "doc_agent.py":               "Documentation System",
-    "gdrive_sync.py":             "Documentation System",
-    "gdrive_setup.py":            "Documentation System",
+    "vision.py":         "Vision Pipeline",
+    "vision_send.py":    "Vision Pipeline",
+    "serial_protocol.py": "Serial Communication Protocol",
+    "main.cpp":          "ESP32 Firmware",
+    "platformio.ini":    "ESP32 Firmware",
+    "WIRING.md":         "Hardware & Platform",
+    "requirements.txt":  "Hardware & Platform",
+    "doc_agent.py":      "Documentation System",
+    "gdrive_sync.py":    "Documentation System",
+    "gdrive_setup.py":   "Documentation System",
 }
 
 

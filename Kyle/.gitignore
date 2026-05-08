@@ -14,3 +14,6 @@ docs/PENDING_IMPROVEMENTS.json
 # PlatformIO build artifacts
 firmware/*/.pio/
 firmware/*/.vscode/
+
+# orchestrator.py scratch output (legacy generator; archived results live in _archive/agent_outputs/)
+agent_outputs/
