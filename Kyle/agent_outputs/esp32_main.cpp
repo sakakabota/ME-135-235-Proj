@@ -1,6 +1,18 @@
 /**
  * ME135 Human Detection — ESP32 Display Controller Firmware
  * ==========================================================
+ *
+ * ⚠ STALE — DO NOT FLASH AS-IS (2026-05-07)
+ * The display hardware changed to a Waveshare RGB-Matrix-P2 64×64 (HUB75).
+ * Reference: https://www.waveshare.com/wiki/RGB-Matrix-P2-64x64
+ * This file still targets WS2812B over a single GPIO at 108×108.
+ * Required rewrite before next deploy:
+ *   - Replace FastLED / NeoPixel driver with `ESP32-HUB75-MatrixPanel-DMA`
+ *   - Set MATRIX_COLS = MATRIX_ROWS = 64 (panel native, no downsampling needed)
+ *   - Change FRAME_BYTES from ~1458 to 512 (64×64 bits = 512 bytes bit-packed)
+ *   - Map 13 HUB75 GPIOs (R1,G1,B1,R2,G2,B2,A,B,C,D,LAT,OE,CLK) instead of single LED data pin
+ *
+ * (Original docstring follows.)
  * Receives a bit-packed 108×108 binary matrix from the Jetson via UART,
  * verifies CRC-16, and drives a WS2812B LED panel (108×108 = 11,664 LEDs).
  *

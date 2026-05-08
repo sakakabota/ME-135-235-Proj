@@ -4,6 +4,12 @@ ME135 Human Detection — CPU-based Computer Vision Pipeline
 Captures frames from the PS3 Eye camera, performs background subtraction,
 and produces a 400×300 binary matrix (0 = background, 1 = human).
 
+⚠ Output size out of date (2026-05-07): the display is now a Waveshare
+RGB-Matrix-P2 64×64 (HUB75). Final output to the serial layer should be
+64×64, not 400×300. Either resize at the end of this pipeline or do it
+in serial_protocol.py before bit-packing. See hardware_recommendation.md
+banner and the project CLAUDE.md "Display hardware (current)" section.
+
 This module is the **CPU fallback**. For CUDA-accelerated processing,
 see gpu_accelerated.py which mirrors this API.
 

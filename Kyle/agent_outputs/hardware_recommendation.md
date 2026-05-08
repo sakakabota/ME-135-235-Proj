@@ -9,6 +9,26 @@
 
 ---
 
+> **⚠ STALE — display hardware changed (2026-05-07)**
+>
+> This BOM and the wiring/power-budget sections below were written for a custom
+> WS2812B addressable strip arranged as a 108×108 panel. The project now uses a
+> single off-the-shelf **Waveshare RGB-Matrix-P2 64×64** HUB75 panel
+> ([wiki](https://www.waveshare.com/wiki/RGB-Matrix-P2-64x64)).
+>
+> Sections that need to be rewritten:
+> - **BOM rows 4, 5, 8, 9** — drop WS2812B, 30A 5V supply, level shifter, inrush cap.
+>   Replace with: 1× Waveshare RGB-Matrix-P2 64×64, 1× HUB75 IDC ribbon cable,
+>   1× 5V / ≥4A bench supply (lower draw than 108×108 WS2812B).
+> - **Wiring diagram** — 13 HUB75 GPIOs (R1,G1,B1,R2,G2,B2,A,B,C,D,LAT,OE,CLK)
+>   instead of a single GPIO 13 → DIN line. No 470 Ω data resistor or level shifter.
+> - **Power budget table** — 4096 LEDs (not 11,664). Peak ≈ 4 A at full white;
+>   typical silhouette draw is much lower.
+> - **CV-perf row** — output res is 64×64, not 400×300. Larry's YOLO branch already
+>   produces 64×64 natively, so the CV→panel resize step disappears on that path.
+
+---
+
 ## 1. Recommended Bill of Materials
 
 | # | Component                  | Qty | Est. Cost | Notes                                             |

@@ -1,7 +1,9 @@
 # ME135 Real-Time Human Detection System
 ## UC Berkeley — MECENG 135 (Spring 2026) — Prof. George Anwar
 
-> **One-liner:** PS3 Eye camera → Jetson (GPU CV) → Serial → ESP32 → LED panel
+> **One-liner:** PS3 Eye camera → Jetson (GPU CV) → Serial → ESP32 → Waveshare RGB-Matrix-P2 64×64 (HUB75)
+>
+> **⚠ Hardware update — 2026-05-07:** the output device is now a [Waveshare RGB-Matrix-P2 64×64](https://www.waveshare.com/wiki/RGB-Matrix-P2-64x64) HUB75 panel. Sections of this README and the sibling files (`esp32_main.cpp`, `serial_protocol.py`, `hardware_recommendation.md`, `cv_pipeline.py`, `gpu_accelerated.py`) still reference the legacy WS2812B / 400×300 / 108×108 / 15 KB-frame design and are stale. The new transport is **64×64 = 512 bytes/frame bit-packed**, and the ESP32 drives the panel via `ESP32-HUB75-MatrixPanel-DMA` instead of FastLED.
 
 ---
 
@@ -22,20 +24,21 @@
 
 This system captures video from a **Sony PS3 Eye camera** (640×480 @ 60 fps),
 performs real-time **background subtraction** to detect humans, produces a
-**400×300 binary pixel matrix** (0 = background, 1 = human), bit-packs it into
-**15,000 bytes**, and transmits it over **UART at 2 Mbaud** to an **ESP32**
-that drives a **WS2812B LED panel** (or split-flap display).
+**64×64 binary pixel matrix** (0 = background, 1 = human) — matching the panel's
+native resolution — bit-packs it into **512 bytes**, and transmits it over
+**UART at 921600 bps (or higher)** to an **ESP32** that drives a
+**Waveshare RGB-Matrix-P2 64×64** LED panel via the **HUB75** interface.
 
 An optional **LabVIEW IoT dashboard** can monitor system state over TCP.
 
 ### Data Flow
 
 ```
-PS3 Eye (USB)          NVIDIA Jetson              ESP32               Display
-  640×480     ──USB──►  Background Sub.  ──UART──►  CRC verify  ──GPIO──►  LED panel
-  @ 60 fps              + Threshold                  + Unpack              (WS2812B)
-                        + Resize 400×300             + Drive LEDs
-                        + Bit-pack 15KB
+PS3 Eye (USB)          NVIDIA Jetson              ESP32                  Display
+  640×480     ──USB──►  Background Sub.  ──UART──►  CRC verify    ──HUB75──►  RGB-Matrix-P2
+  @ 60 fps              + Threshold       921600+   + Unpack 64×64             64×64 panel
+                        + Resize 64×64               + DMA push                (Waveshare)
+                        + Bit-pack 512B
                                                          │
                                                          ▼  (TCP, optional)
                                                     LabVIEW IoT Hub

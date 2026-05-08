@@ -1,6 +1,17 @@
 """
 ME135 Human Detection — Serial Protocol (Jetson → ESP32)
 ========================================================
+
+⚠ STALE — payload sizing is wrong (2026-05-07)
+The display hardware changed to a Waveshare RGB-Matrix-P2 64×64 (HUB75).
+Reference: https://www.waveshare.com/wiki/RGB-Matrix-P2-64x64
+Required rewrite before next deploy:
+  - Resize CV mask to 64×64 (panel native — no separate downsample tier needed)
+  - Bit-packed payload becomes 64×64 / 8 = 512 bytes/frame (was 1,458)
+  - Adjust LEN_H/LEN_L, frame buffer, and CRC scope accordingly
+  - Larry's pipeline already outputs 64×64; can be wired in directly without resize
+
+(Original docstring follows.)
 Downsamples the 400x300 CV matrix to the physical 108x108 LED panel,
 bit-packs it into 1,458 bytes, and transmits over UART with framing,
 CRC-16, and ACK/NAK flow control.

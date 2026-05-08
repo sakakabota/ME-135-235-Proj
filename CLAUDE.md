@@ -38,11 +38,29 @@ If a task is ambiguous about which folder to work in, or whether an edit should 
 
 ME135/235 final project. Real-time human detection pipeline:
 
-- **Kyle's pipeline** (`agent_outputs/` in the sibling `ME135 Camera Processing` folder, integrated into `Kyle/`): PS3 Eye → OpenCV background subtraction (MOG2/KNN) → 400×300 binary matrix → bit-packed serial → ESP32 → WS2812B LED panel.
+- **Kyle's pipeline** (`agent_outputs/` in the sibling `ME135 Camera Processing` folder, integrated into `Kyle/`): PS3 Eye → OpenCV background subtraction (MOG2/KNN) → binary matrix → bit-packed serial → ESP32 → 64×64 LED matrix.
 - **Larry's pipeline** (`Larry/vision.py`, `Larry/vision_fast.cpp`): YOLOv8 instance segmentation → 64×64 binary silhouette. Python via `ultralytics`, or C++ via OpenCV DNN reading exported ONNX. No serial/ESP32 transport — preview-only for now.
 
 The two pipelines are different detection strategies for the same downstream goal. They are not (yet) integrated. Don't assume one supersedes the other without explicit instruction from Kyle.
 
-## Documentation Agent
+### Display hardware (current)
 
-`Kyle/doc_agent.py` runs automatically pre-push via `.git/hooks/pre-push`. It generates evolution reports into `Kyle/docs/`. Don't disable the hook without asking Kyle.
+The output device is a **Waveshare RGB-Matrix-P2 64×64** LED matrix board (HUB75 interface, 2mm pitch, 128mm × 128mm, 4096 pixels). Reference: https://www.waveshare.com/wiki/RGB-Matrix-P2-64x64
+
+Implications:
+- Native frame size sent to the ESP32 is **64×64 = 4096 bits = 512 bytes/frame** bit-packed. Older pipeline docs that reference 400×300 CV output, 108×108 downsampled transmission, or ~15,000-byte payloads are stale and pre-date this hardware change.
+- The ESP32 drives the panel over **HUB75**, not WS2812B. Use a HUB75 driver (e.g., `ESP32-HUB75-MatrixPanel-DMA`) — `FastLED` / NeoPixel paths in older `agent_outputs/` files are wrong for this hardware.
+- **Larry's pipeline already outputs 64×64 natively**, so YOLO silhouettes can go to the panel without an extra resize. Kyle's MOG2 pipeline still needs a resize step from CV resolution down to 64×64 before bit-packing.
+- Files known stale and needing rewrite: `Kyle/agent_outputs/esp32_main.cpp`, `Kyle/agent_outputs/serial_protocol.py` (downsample math + payload size), `Kyle/agent_outputs/hardware_recommendation.md` (BOM, wiring, power budget).
+
+## Documentation Agent — Read This Before Pushing
+
+`Kyle/doc_agent.py` runs automatically pre-push via `.git/hooks/pre-push`. It spawns 3 parallel Claude agents (historian/Opus, architect/Sonnet, critic/Opus) that read source files and call the Anthropic API. Generates evolution reports into `Kyle/docs/` and a SQLite history.
+
+**⚠ Critical for any agent running `git push` in this repo:**
+
+- The hook takes **30–90 seconds**. The critic may prompt interactively (`y/N`) for proposed fixes.
+- A non-TTY agent shell will not see the hook's progress UI and will not be able to answer interactive prompts. From the agent's perspective, the push will appear to hang silently.
+- **Do not retry or kill the push when it seems hung.** That is the hook running. Verify with `ps aux | grep -E "doc_agent|claude"`. Wait at least 2 minutes before suspecting a real issue.
+- If an agent genuinely needs to push without the hook (rare), use `git push --no-verify` as an escape hatch. Don't make a habit of it.
+- Don't disable the hook. Don't modify `Kyle/doc_agent.py` without asking Kyle.

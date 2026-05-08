@@ -7,7 +7,7 @@ Spawns 7 specialized Claude agents in parallel, each self-assigned the most
 relevant skills, to tackle every subsystem of the ME135 project:
 
   PS3 Eye Camera → Calibration → Background Subtraction → GPU Processing
-  → 400x300 Binary Matrix → ESP32 Serial → LED Panel / Split-Flap Board
+  → 64×64 Binary Matrix → ESP32 Serial → Waveshare RGB-Matrix-P2 (HUB75)
 
 Usage:
     python orchestrator.py
@@ -38,15 +38,17 @@ ME135 Camera Processing Project — UC Berkeley (Spring 2026)
 ===========================================================
 Goal:
   Build a real-time human detection system using a PS3 Eye Camera that produces
-  a 400×300 binary pixel matrix sent over serial to an ESP32, which actuates
-  either an LED panel or a split-flap display board.
+  a 64×64 binary pixel matrix sent over serial to an ESP32, which drives a
+  Waveshare RGB-Matrix-P2 64×64 LED panel (HUB75 interface, 2mm pitch).
+  Reference: https://www.waveshare.com/wiki/RGB-Matrix-P2-64x64
 
 Hardware stack:
   - Camera:     Sony PS3 Eye (USB, 640×480 @ 60fps, Linux driver: gspca_ov534)
   - Host unit:  NVIDIA Jetson (Nano / Orin) OR ESP32 (for lightweight variant)
   - GPU:        Jetson onboard CUDA cores (preferred for image processing)
-  - MCU:        ESP32 (receives matrix, drives display)
-  - Display:    LED panel (WS2812B addressable) OR split-flap board
+  - MCU:        ESP32 (receives matrix, drives panel via HUB75)
+  - Display:    Waveshare RGB-Matrix-P2 64×64 (HUB75, 4096 RGB LEDs, 128×128 mm)
+                Driver library: ESP32-HUB75-MatrixPanel-DMA (NOT FastLED/WS2812B)
 
 Course context (from ME135 syllabus — MECENG 135, George Anwar):
   - 30% grade: 3-5 lab programming exercises; 60%: final project demo + presentation
@@ -79,14 +81,15 @@ Google Antigravity agent development best practices:
 Software constraints:
   - Language:  Python (preferred) or LabVIEW
   - CV library: OpenCV (with CUDA backend on Jetson)
-  - Output:    400×300 np.ndarray of uint8 (0 = background, 1 = human)
-  - Protocol:  Serial UART — bit-packed matrix; CV at 400×300, downsampled to 108×108 for LED panel
-               Transmission: 1,458B payload + 8B framing = 1,466 bytes/frame at 2Mbaud
+  - Output:    64×64 np.ndarray of uint8 (0 = background, 1 = human) — matches panel native res
+  - Protocol:  Serial UART — bit-packed matrix at panel resolution.
+               64×64 = 4,096 bits = 512 bytes/frame payload + framing/CRC overhead.
+               At 921600 bps a 520-byte frame transmits in ~5.6 ms → comfortable headroom for 60+ fps.
 
 Algorithm:
   1. Record a short calibration video (empty room, no humans)
   2. Build background model from calibration frames
-  3. For each live frame: subtract background, threshold, resize to 400×300
+  3. For each live frame: subtract background, threshold, resize to 64×64 (panel native)
   4. Produce binary matrix; transmit to ESP32
 """
 
@@ -264,8 +267,10 @@ def make_agents(notebook_context: str = "") -> list[dict]:
 
                 2. **Processing platform trade-off**
                    - Jetson Nano (128 CUDA cores) vs Jetson Orin Nano (1024 CUDA cores) vs bare ESP32
-                   - For 400×300 @ target 15 fps: which platform handles background subtraction + resize?
-                   - Memory footprint estimate for the binary matrix pipeline
+                   - Output is 64×64 (panel native). Internal CV res can be higher (e.g., 320×240 or 640×480)
+                     then resized down before transmission. Which platform handles BG sub + resize at 30 fps?
+                   - Memory footprint estimate for the 64×64 binary matrix pipeline (trivially small —
+                     payload is 512 bytes/frame; bottleneck is CV, not transport)
 
                 3. **Python vs LabVIEW** (IMPORTANT: LabVIEW Student Edition is the course-required tool)
                    - LabVIEW: NI Vision Dev Module for cameras, Producer/Consumer DAQ pattern,
@@ -305,15 +310,16 @@ def make_agents(notebook_context: str = "") -> list[dict]:
                 3. **Processing loop**:
                    - Capture frame → apply background subtractor → get foreground mask
                    - Morphological cleanup (dilate/erode) to remove noise
-                   - Resize mask to 400×300 (`cv2.resize` with INTER_NEAREST to preserve binary)
+                   - Resize mask to 64×64 (`cv2.resize` with INTER_AREA, then threshold) —
+                     this matches the Waveshare RGB-Matrix-P2 panel native resolution
                    - Threshold to pure 0/1 (`np.where(mask > 0, 1, 0).astype(np.uint8)`)
-                   - Return the 400×300 ndarray
+                   - Return the 64×64 ndarray
                 4. Module interface:
                    ```python
                    class CameraProcessor:
                        def __init__(self, source, calibration_video=None): ...
                        def calibrate(self, n_frames=100): ...
-                       def get_binary_frame(self) -> np.ndarray: ...  # shape (300, 400), dtype uint8
+                       def get_binary_frame(self) -> np.ndarray: ...  # shape (64, 64), dtype uint8
                        def release(self): ...
                    ```
                 5. Include a `__main__` block that shows a live preview and prints FPS.
@@ -344,7 +350,7 @@ def make_agents(notebook_context: str = "") -> list[dict]:
                 1. **OpenCV CUDA backend**:
                    - `cv2.cuda.GpuMat` for frame upload/download
                    - `cv2.cuda.createBackgroundSubtractorMOG2()` for GPU background subtraction
-                   - `cv2.cuda.resize()` for 400×300 scaling
+                   - `cv2.cuda.resize()` to 64×64 (panel native, Waveshare RGB-Matrix-P2)
                    - `cv2.cuda.threshold()` for binarization
 
                 2. **Graceful CPU fallback**:
@@ -387,22 +393,22 @@ def make_agents(notebook_context: str = "") -> list[dict]:
             """).strip(),
             "task_prompt": textwrap.dedent("""
                 Design and implement the serial communication protocol for transmitting the
-                400×300 binary matrix from the host (Jetson/PC) to the ESP32.
+                64×64 binary matrix from the host (Jetson/PC) to the ESP32.
 
-                **Math baseline**: 400×300 = 120,000 bits → bit-packed = 15,000 bytes/frame
+                **Math baseline**: 64×64 = 4,096 bits → bit-packed = 512 bytes/frame
 
                 Write `serial_protocol.py` (Python host side) containing:
 
                 1. **Frame format**:
                    ```
-                   [SYNC 0xAA 0x55] [2-byte frame_id] [15000 bytes bit-packed data] [2-byte CRC16]
-                   = 15,005 bytes total per frame
+                   [SYNC 0xAA 0x55] [2-byte frame_id] [512 bytes bit-packed data] [2-byte CRC16]
+                   = 518 bytes total per frame
                    ```
 
                 2. **Bit packing**: 8 pixels → 1 byte (MSB first, row-major order)
                    ```python
                    def pack_matrix(matrix: np.ndarray) -> bytes:
-                       # Pack 400x300 binary ndarray into 15000 bytes.
+                       # Pack 64x64 binary ndarray into 512 bytes.
                    ```
 
                 3. **MatrixSender class**:
@@ -414,15 +420,12 @@ def make_agents(notebook_context: str = "") -> list[dict]:
                    ```
 
                 4. **Baud rate analysis** (include as a docstring or comment):
-                   - At 115200 bps: 15,005 bytes = ~1.04 seconds/frame → 1 fps (too slow!)
-                   - At 921600 bps: ~0.13 seconds/frame → 7.7 fps
-                   - At 3Mbps (USB CDC / FTDI): ~40 fps
-                   - Recommendation: USB CDC at 3Mbps, or compress with RLE
+                   - At 115200 bps: 518 bytes = ~45 ms/frame → 22 fps
+                   - At 921600 bps: ~5.6 ms/frame → 178 fps theoretical (CV will be the bottleneck)
+                   - At 3Mbps (USB CDC / FTDI): ~1.7 ms/frame
+                   - Recommendation: 921600 bps is plenty for 60+ fps; 3Mbps if you want slack
 
-                5. **Optional RLE compression** for sparse binary frames:
-                   ```python
-                   def rle_encode(packed_bytes: bytes) -> bytes: ...
-                   ```
+                5. RLE compression is unnecessary at 64×64 — 512 bytes/frame is already trivial.
 
                 Also write `PROTOCOL_SPEC.md` documenting the frame format.
 
@@ -438,15 +441,16 @@ def make_agents(notebook_context: str = "") -> list[dict]:
                 ## Skill Self-Assignment
                 You are activating the following specialist skills:
                 - **Embedded Firmware Engineer**: ESP32 Arduino/PlatformIO, FreeRTOS tasks
-                - **Hardware Interface Specialist**: WS2812B LED strips, stepper motor drivers
+                - **Hardware Interface Specialist**: HUB75 RGB matrix panels, ESP32-HUB75-MatrixPanel-DMA
 
                 At the start of your response, state your active skills.
 
                 {PROJECT_CONTEXT}{extra}
             """).strip(),
             "task_prompt": textwrap.dedent("""
-                Write complete ESP32 firmware that receives the 400×300 binary matrix
-                over serial and drives an output display.
+                Write complete ESP32 firmware that receives the 64×64 binary matrix
+                over serial and drives the Waveshare RGB-Matrix-P2 64×64 panel via HUB75.
+                Reference: https://www.waveshare.com/wiki/RGB-Matrix-P2-64x64
 
                 Produce two files:
 
@@ -454,32 +458,30 @@ def make_agents(notebook_context: str = "") -> list[dict]:
 
                 Core logic:
                 1. **Serial receiver**:
-                   - Listen on Serial (USB CDC at 3Mbps) for frame packets
-                   - Parse: SYNC [0xAA,0x55] | 2-byte frame_id | 15000 bytes | 2-byte CRC16
+                   - Listen on Serial (USB CDC, 921600 or 3Mbps) for frame packets
+                   - Parse: SYNC [0xAA,0x55] | 2-byte frame_id | 512 bytes | 2-byte CRC16
                    - Validate CRC; discard bad frames
                    - Double-buffer: fill `backBuffer` while `frontBuffer` is being displayed
 
-                2. **LED panel output** (conditional `#define MODE_LED`):
-                   - Use FastLED with NEOPIXEL / WS2812B
-                   - Map binary matrix to LED strip: pixel[row*400+col] = (bit==1) ? CRGB::White : CRGB::Black
-                   - FastLED.show() after each frame
+                2. **HUB75 panel output**:
+                   - Use the `ESP32-HUB75-MatrixPanel-DMA` library (Mrfaptastic)
+                   - Configure `HUB75_I2S_CFG` with PANEL_RES_X=64, PANEL_RES_Y=64, PANEL_CHAIN=1
+                   - Default HUB75 pin map for ESP32 (R1,G1,B1,R2,G2,B2,A,B,C,D,E,LAT,OE,CLK)
+                   - Map binary matrix bit → `dma_display->drawPixel(x, y, bit ? 0xFFFF : 0x0000)`
+                   - Or batch via `fillScreenRGB888` for speed
+                   - DO NOT use FastLED / NeoPixel paths — wrong interface for this panel
 
-                3. **Split-flap output** (conditional `#define MODE_SPLITFLAP`):
-                   - Each "pixel" maps to a stepper-driven flap (0 = dark face, 1 = white face)
-                   - Use AccelStepper library
-                   - Queue flap changes; step through in background task
-
-                4. **FreeRTOS tasks**:
+                3. **FreeRTOS tasks**:
                    - `TaskRx`: serial receive + CRC check (Core 0)
-                   - `TaskDisplay`: swap buffers + drive output (Core 1)
+                   - `TaskDisplay`: swap buffers + push to HUB75 DMA (Core 1)
 
-                5. Include a watchdog reset if no frame received in 5 seconds.
+                4. Include a watchdog reset if no frame received in 5 seconds.
 
                 **File 2: `platformio.ini`**
                 - Board: `esp32dev` (or `esp32-s3-devkitc-1`)
                 - Framework: arduino
-                - Dependencies: FastLED, AccelStepper
-                - monitor_speed: 3000000
+                - Dependencies: `mrfaptastic/ESP32 HUB75 LED MATRIX PANEL DMA Display`
+                - monitor_speed: 921600
 
                 Write both files.
             """).strip(),
@@ -558,8 +560,11 @@ def make_agents(notebook_context: str = "") -> list[dict]:
                 - PS3 Eye Camera (~$8 on eBay)
                 - NVIDIA Jetson Nano 4GB (or Orin Nano 8GB)
                 - ESP32-S3 DevKit (for faster USB CDC)
-                - WS2812B LED strip (if LED panel mode) OR split-flap hardware
-                - 5V power supply (LEDs draw 60mA/pixel × pixels in use)
+                - Waveshare RGB-Matrix-P2 64×64 LED panel (HUB75, 4096 RGB LEDs)
+                  https://www.waveshare.com/wiki/RGB-Matrix-P2-64x64
+                - 5V / ≥4A power supply for the panel (≈ 4 A peak at full white,
+                  much less typical for sparse silhouette rendering)
+                - HUB75 ribbon cable + 16-pin IDC connector (panel-to-ESP32 wiring)
                 - USB-A to Micro-USB cable (PS3 cam) + USB-C (Jetson + ESP32)
 
                 ## 2. PS3 Eye Camera Driver Install (Ubuntu 20.04/22.04 + Jetson L4T)

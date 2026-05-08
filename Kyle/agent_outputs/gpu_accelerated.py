@@ -21,6 +21,12 @@ Performance notes (Jetson Orin Nano Super, 640×480 → 400×300):
     - CPU path:  ~8 ms/frame   (~60 fps capture-limited)
     - GPU path:  ~2 ms/frame   (~60 fps capture-limited, camera-bound)
 
+⚠ Output size out of date (2026-05-07): the display is now a Waveshare
+RGB-Matrix-P2 64×64 (HUB75). The final resize stage should produce 64×64,
+not 400×300. cv2.cuda.resize → 64×64 is essentially free; CPU/GPU latency
+numbers above won't change meaningfully. See CLAUDE.md "Display hardware
+(current)" section.
+
 API note: Uses OpenCV 4.8 CUDA return-value style (JetPack 6):
     dst = cv2.cuda.cvtColor(src, code)        # NOT cvtColor(src, code, dst)
     dst = cv2.cuda.absdiff(src1, src2)        # NOT absdiff(src1, src2, dst)

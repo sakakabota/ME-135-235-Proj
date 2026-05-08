@@ -9,6 +9,23 @@
 
 ---
 
+> **⚠ STALE — frame size and baud need revision (2026-05-07)**
+>
+> v1.0 of this spec targeted a custom 108×108 WS2812B panel fed from a 400×300
+> CV pipeline (15,000-byte payload at 2 Mbaud). The display has been replaced
+> with a **Waveshare RGB-Matrix-P2 64×64** HUB75 panel
+> ([wiki](https://www.waveshare.com/wiki/RGB-Matrix-P2-64x64)).
+>
+> v2.0 should specify:
+> - Payload: **64 × 64 = 4,096 bits = 512 bytes/frame** bit-packed (was 15,000)
+> - Baud: **921,600 bps** is sufficient (~5.6 ms/frame, headroom for 60+ fps);
+>   2 Mbaud / 3 Mbps remain valid options if extra slack is wanted
+> - Frame total: ~518 bytes (sync + frame_id + 512 + CRC), no longer 15,005
+> - Receiver display backend is HUB75 via `ESP32-HUB75-MatrixPanel-DMA`, not
+>   WS2812B via FastLED — does not change the wire protocol itself
+
+---
+
 ## 1. Overview
 
 The Jetson (host) transmits a **400 × 300 binary pixel matrix** to the ESP32

@@ -6,7 +6,14 @@
 # Every Python module reads from this file via config_load() in main.py.
 #
 # Hardware: Jetson Orin Nano Super (JetPack 6, CUDA 12.2, OpenCV 4.8)
-#           + ESP32-DevKitC + 108×108 WS2812B LED panel
+#           + ESP32-DevKitC + Waveshare RGB-Matrix-P2 64×64 LED panel (HUB75)
+#           https://www.waveshare.com/wiki/RGB-Matrix-P2-64x64
+# ============================================================================
+#
+# ⚠ Stale values flagged inline below (2026-05-07 hardware swap from a custom
+#   108×108 WS2812B build to the off-the-shelf Waveshare 64×64 HUB75 panel).
+#   Companion code (esp32_main.cpp, serial_protocol.py) still uses the old
+#   numbers — update those before depending on these values being honored.
 # ============================================================================
 
 # --- Camera ---
@@ -31,8 +38,9 @@ calibration:
 
 # --- Processing pipeline ---
 processing:
-  output_width: 400                # Binary matrix columns
-  output_height: 300               # Binary matrix rows
+  output_width: 64                 # Binary matrix columns — match panel native (Waveshare RGB-Matrix-P2)
+  output_height: 64                # Binary matrix rows    — match panel native (Waveshare RGB-Matrix-P2)
+                                   # Old 400×300 values pre-dated the 64×64 HUB75 panel.
   threshold: 25                    # Pixel diff threshold (0-255) for static method
   morph_kernel_size: 5             # Morphological open/close kernel (px)
   min_contour_area: 500            # Discard blobs smaller than this (px²)
@@ -51,13 +59,16 @@ serial:
 
 # --- Display (driven by ESP32) ---
 display:
-  type: "ws2812b"                  # "ws2812b" | "split_flap"
-  panel_width: 108                 # Physical LED panel columns
-  panel_height: 108                # Physical LED panel rows (108x108 = 11,664 LEDs)
-  brightness: 128                  # 0-255, for WS2812B
-  gpio_data_pin: 13               # ESP32 GPIO for NeoPixel data
-  fps_target: 10                   # Display loop target; WS2812B physical limit ~3fps for 11,664 LEDs
-                                   # Set to 10 for CV processing; ESP32 will drop frames if display lags
+  type: "hub75_waveshare_p2_64"    # Waveshare RGB-Matrix-P2 64×64 (HUB75)
+                                   # Driver lib: ESP32-HUB75-MatrixPanel-DMA (Mrfaptastic)
+  panel_width: 64                  # Physical LED panel columns
+  panel_height: 64                 # Physical LED panel rows (64×64 = 4,096 RGB LEDs)
+  brightness: 128                  # 0-255 (HUB75 PWM brightness)
+  # HUB75 uses 13 control GPIOs, not a single data pin. Default ESP32 mapping
+  # used by ESP32-HUB75-MatrixPanel-DMA is fine for most boards; override only
+  # if you've reassigned pins in the firmware HUB75_I2S_CFG block.
+  fps_target: 60                   # HUB75 DMA easily sustains 60+ Hz at 64×64;
+                                   # CV pipeline is the bottleneck, not the panel.
 
 # --- LabVIEW IoT Hub ---
 labview:

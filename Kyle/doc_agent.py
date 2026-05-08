@@ -386,8 +386,8 @@ def make_architect_agent(file_list: str) -> dict:
                Include: frame sizes, baud rates, data types, GPU/CPU annotations.
 
             2. **"Data Flow"** — Mermaid sequence diagram showing one frame's journey
-               from camera capture to LED panel illumination.
-               Include timing estimates and byte counts at each step.
+               from camera capture to the 64×64 Waveshare HUB75 LED panel.
+               Include timing estimates and byte counts at each step (note: 512 B/frame at panel res).
 
             3. **"Module Dependency Graph"** — Mermaid graph showing how Python modules
                import/depend on each other. Show the class interface boundaries.

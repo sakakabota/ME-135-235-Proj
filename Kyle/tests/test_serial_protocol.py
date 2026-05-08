@@ -2,6 +2,14 @@
 Unit tests for serial_protocol.py
 Tests CRC-16, bit-packing, downsampling, and round-trip correctness.
 Run: cd /Users/kyle/Documents/Antigravity/ME-135-235-Proj/Kyle && python -m pytest tests/ -v
+
+⚠ These tests pin the legacy 400×300 → 108×108 / 1,458-byte payload contract
+  (2026-05-07). The display hardware is now a Waveshare RGB-Matrix-P2 64×64
+  (HUB75), so when serial_protocol.py is rewritten to emit 64×64 = 512-byte
+  frames, the constants imported here (CV_ROWS, CV_COLS, PANEL_ROWS,
+  PANEL_COLS, PAYLOAD_BYTES) and any size-specific assertions below will need
+  to be updated together. Don't update tests in isolation — match them to the
+  rewritten module.
 """
 
 import sys
