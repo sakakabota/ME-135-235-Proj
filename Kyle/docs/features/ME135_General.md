@@ -1711,3 +1711,139 @@ However, the project has a **critical integration defect**: a hardware change fr
 The CV pipeline code itself is competent. `main.py` needs resource-cleanup hardening (no try/finally). Serial transmission lacks a flush() before ACK wait. The codebase is one focused refactoring sprint away from functional integration.
 
 ---
+## v10 — 2026-05-07 19:57 — `4283675`
+
+### What Changed
+
+This commit (`4283675`) is a documentation-only snapshot — the third auto-generated report in a row. But its payload (304-line report + 135-line feature appendix) is a **retrospective capture** of the project's most consequential evolution window: five substantive commits (`1d051ee` → `9087b6c`) that replaced a theoretical 108×108 WS2812B system with a working Mac→ESP32→HUB75 bench rig.
+
+Here is everything that actually changed across this window, grouped by subsystem:
+
+### CV Pipeline / Vision
+
+- **Confidence trackbar replaced keyboard shortcuts** (`1d051ee`): YOLO confidence tuning used `[` / `]` keys — slow and imprecise due to OS key-repeat. An OpenCV `createTrackbar` slider now gives continuous, instant control. Small change, but it unblocks effective live tuning sessions.
+
+- **New `serial_protocol.py` in Kyle's workspace** (`9087b6c`): Complete rewrite of the wire format. Payload shrank from **1,458 → 512 bytes** (64×64 bit-packed vs. 108×108). The old `agent_outputs/serial_protocol.py` has a `pack_matrix()` shape guard that **raises ValueError on any 64×64 input** — confirmed by reading the source (`if matrix.shape != (PANEL_ROWS, PANEL_COLS)` where both are 108). The new version adds `pack_mask_64x64()` and a `SerialSender` with CRC-16/CCITT-FALSE framed packets (520 bytes total).
+
+- **New `vision_send.py`** (`9087b6c`): Unified YOLO capture + USB serial transmit in one script. Auto-detects macOS serial ports, supports `--no-serial` for offline tuning, targets ~30 fps at 1 Mbaud. Replaces `agent_outputs/main.py` — which required a Jetson, a blocking `input()` calibration prompt (line 100 of main.py: `input("\nPress Enter when ready to start calibration…")`), and hardware nobody actually had.
+
+- **`requirements.txt`** (`9087b6c`): First explicit dependency file in Kyle's workspace. Pins `ultralytics`, `opencv-python`, `pyserial`, `numpy`.
+
+### ESP32 Firmware
+
+- **`main.cpp` rewritten for HUB75** (`9087b6c`): Display driver changed from Adafruit NeoPixel (bit-banged single GPIO) to ESP32-HUB75-MatrixPanel-DMA (13-pin DMA-driven). Key improvements:
+  - **Non-blocking `pollFrame()` state machine** — the panel keeps refreshing during serial gaps, unlike the old blocking `receiveFrame()`.
+  - **Pot-controlled color lerp** (white→red via EWMA-smoothed ADC) — the project's first physical interactive input.
+  - **Graceful watchdog**: blanks panel after 5 s of silence and self-recovers, instead of hard-resetting the MCU.
+  - **E_PIN (GPIO 32)** for 1/32-scan 64-row panels — entirely missing from old code, which had no concept of row-scanning.
+  - `setRxBufferSize(2048)` called *before* `Serial.begin()` — the old code did this correctly (line in `esp32_main.cpp` setup) but the new code fixes buffer sizing for the smaller 512-byte payloads.
+
+- **`platformio.ini`** (`9087b6c`): Targets `espressif32@6.5.0` with `ESP32-HUB75-MatrixPanel-DMA@^3.0.11`. The old file still depends on `Adafruit NeoPixel@^1.12.0` for hardware that doesn't exist.
+
+### Hardware Documentation
+
+- **`WIRING.md`** (`9087b6c`, 124 lines): First-ever wiring reference. 16-pin HUB75E↔ESP32 GPIO map, power separation rules, GPIO 12 strapping-pin caveat, level-shifter guidance, 9-step bring-up checklist, troubleshooting table. This is the "bus factor" document — previously, wiring knowledge existed only in someone's head.
+
+### Configuration & Staleness Management
+
+- **`config.yaml` pivoted** (`90363fc`): `display.type` changed from `ws2812b` to `hub75_waveshare_p2_64`. Dimensions dropped 108×108 → 64×64. FPS target raised 10→60 (HUB75 DMA can sustain it). But critically: **the serial section still says `baud_rate: 2000000` and `port: /dev/ttyUSB0`** — both stale. The new `vision_send.py` uses 1 Mbaud and auto-detects macOS ports, bypassing config entirely.
+
+- **STALE banners** added to all files in `agent_outputs/` referencing old hardware: `esp32_main.cpp`, `serial_protocol.py`, `cv_pipeline.py`, `gpu_accelerated.py`. Each banner documents exactly what's wrong. Files preserved as historical reference — nothing deleted.
+
+### Project Hygiene
+
+- **`.gitignore`** (`9087b6c`): Added `*.pt` (YOLO weights, 25+ MB) and `firmware/*/.pio/`, `firmware/*/.vscode/` (PlatformIO build artifacts). Prevents binary bloat in git history.
+
+### Auto-Generated Documentation (HEAD commit)
+
+- **`report_2026-05-07_1954.md`** (304 lines): Full evolution report with architecture diagrams, before/after flow comparisons, and code health assessment.
+- **`ME135_General.md`** (+135 lines): v9 appendix covering the same window with commit-level detail.
+- **`README.md`**: Index link added for the new report.
+
+### What Was NOT Touched
+
+- **`agent_outputs/`** — all original files preserved intact (with STALE banners). The old `main.py` still imports from `cv_pipeline` and `serial_protocol`, still expects a Jetson, still has the blocking calibration prompt. It is a historical artifact now.
+- **`Larry/`** — untouched per `CLAUDE.md` collaboration convention.
+- **`orchestrator.py`** — still references old `PROJECT_CONTEXT` with mixed Jetson/ESP32 language. Its `TOOLS` only write to `agent_outputs/`, not Kyle's active workspace.
+
+### Evolution Timeline
+
+The recent window contains 10 commits — 5 substantive code/config changes interleaved with 5 auto-generated doc snapshots. The timeline below filters to meaningful commits only.
+
+### Commit Graph
+
+```mermaid
+gitGraph
+    commit id: "b3727ee" tag: "docs"
+    commit id: "1d051ee" tag: "conf-trackbar" type: HIGHLIGHT
+    commit id: "90363fc" tag: "hub75-pivot" type: HIGHLIGHT
+    commit id: "9087b6c" tag: "end-to-end-v2" type: HIGHLIGHT
+    commit id: "7df3343" tag: "docs-v8"
+    commit id: "4283675" tag: "docs-v9 (HEAD)"
+```
+
+### Subsystem Touch Map
+
+Each substantive commit's reach — from a single-file UX tweak to the full-stack rewrite:
+
+```mermaid
+timeline
+    title Kyle Workspace — Hardware Pivot Window
+    section CV UX Improvement
+        1d051ee Conf trackbar : Vision
+            : Replaced [/] keyboard shortcuts with OpenCV trackbar
+            : Instant continuous YOLO confidence tuning
+    section Hardware Pivot Declaration
+        90363fc Context switch : Config / Docs
+            : config.yaml — ws2812b → hub75_waveshare_p2_64
+            : 108×108 → 64×64 everywhere
+            : STALE banners on all agent_outputs/ files
+    section Full-Stack Rewrite
+        9087b6c End-to-end pipeline : Vision + Serial + Firmware + Docs
+            : serial_protocol.py — 512B CRC16 framed packets
+            : vision_send.py — YOLO → USB serial at 30 fps
+            : main.cpp — ESP32 HUB75 DMA + pot color lerp
+            : platformio.ini — HUB75 lib deps
+            : WIRING.md — first wiring doc ever
+            : requirements.txt + .gitignore cleanup
+    section Documentation Consolidation
+        7df3343 + 4283675 Reports : Docs only
+            : v8 and v9 evolution reports
+            : ME135_General.md feature appendix
+            : README index updated
+```
+
+### Architecture — Before and After
+
+The project underwent a complete hardware pivot. The data path changed fundamentally:
+
+```mermaid
+flowchart LR
+    subgraph STALE["agent_outputs/ — STALE (never built)"]
+        direction LR
+        A["Jetson Orin\n400×300 MOG2\nbackground sub"] -->|"1,458 B\n2 Mbaud GPIO UART"| B["ESP32\nAdafruit NeoPixel\n108×108 WS2812B"]
+    end
+
+    subgraph ACTIVE["Kyle/ — ACTIVE (bench-verified)"]
+        direction LR
+        C["Mac Webcam\nYOLO v8 seg\n64×64 mask"] -->|"512 B\n1 Mbaud USB-CDC"| D["ESP32\nHUB75 DMA\n64×64 panel\n+ pot color"]
+    end
+
+    STALE -.->|"90363fc: hardware pivot"| ACTIVE
+```
+
+### The Pivot In One Sentence
+
+A theoretical 108×108 NeoPixel system — which would crash on real inputs due to hardcoded shape guards — was replaced by a working 64×64 HUB75 rig, switching from hand-tuned background subtraction to neural-net segmentation, from blocking serial reads to a non-blocking state machine, and from a never-owned Jetson to a Mac on the desk.
+
+### Code Health Summary
+
+**Overall Grade: C+**
+
+The Python-side architecture is well-structured: clean separation of CV pipeline, serial transport, and orchestration with a single-source-of-truth config.yaml. Logging, graceful shutdown signals, and watchdog timers show mature SRE thinking. The doc-agent and gdrive-sync tooling is impressively automated.
+
+However, the project has a **critical integration-breaking defect**: the hardware migration from 108×108 WS2812B to 64×64 HUB75 was only partially propagated. `config.yaml` and the CV pipelines were updated, but `serial_protocol.py` and `esp32_main.cpp` still hardcode the old dimensions and driver. **The system cannot run end-to-end** — `pack_matrix()` will crash with a `ValueError` on every frame because it receives 64×64 input but expects 300×400 or 108×108.
+
+Secondary issues include missing camera-open validation (delayed confusing failures), resource leaks on exceptions in `main.py`, and a fully stale protocol spec. The codebase needs one focused consistency pass to become deployable.
+
+---
