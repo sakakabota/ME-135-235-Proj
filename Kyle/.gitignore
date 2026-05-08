@@ -7,3 +7,10 @@ __pycache__/
 # Local docs DB (binary, not useful in git)
 docs/history.db
 docs/PENDING_IMPROVEMENTS.json
+
+# Model weights — fetched on first run, too big for git
+*.pt
+
+# PlatformIO build artifacts
+firmware/*/.pio/
+firmware/*/.vscode/
