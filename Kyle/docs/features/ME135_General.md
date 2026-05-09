@@ -2659,3 +2659,81 @@ The project demonstrates solid embedded/vision architecture — a clean framed s
 **Weaknesses:** A path traversal vulnerability in doc_agent.py's `read_source` tool is the most urgent finding. Missing `mediapipe` dependency in requirements.txt will break fresh installs. Both CV pipelines run unconditionally every frame, halving achievable FPS. Shared mutable state between concurrent async agents is fragile. The firmware allocates a 513-byte stack buffer unnecessarily. Several resources (serial port, camera) lack guaranteed cleanup via context managers.
 
 ---
+## v13 — 2026-05-09 15:03 — `4245deb`
+
+### What Changed
+
+This batch of commits (from `735a33c` through `4245deb`) represents three distinct threads of work converging: Wen's finger-glove pipeline and GUI makeover, documentation accuracy fixes, and Kyle's GUI bugfix patch on Steph's dashboard. Auto-generated doc commits (`ae879e1`, `4d4791f`, `7792982`, `735a33c`) are omitted below.
+
+### GUI / Dashboard
+
+- **Wen's GUI layout landed** (`10cd864`, merged in `1f930b3`): The PyQt6 dashboard got its final visual identity — retro Canva-style color palette (cream background, blue wireframes, coral accents), checkerboard top/bottom borders generated at runtime, draggable floating emoji decorations, and a three-viewport layout (Original Feed, Silhouette, LED Preview). This replaced whatever earlier layout existed with a polished, presentation-ready interface.
+
+- **Kyle patched Steph's GUI with 3 critical display bugs** (`4245deb` — HEAD):
+  1. **Aspect-ratio distortion fixed.** `setScaledContents(True)` was squashing 16:9 camera frames into 4:3 viewports. Kyle added center-cropping to `min(h, w)` inside `convert_cv_qt` so the preview stays square without stretching.
+  2. **Viewport size locked.** `screen_frame` now uses `setFixedSize(360, 360)` — prevents viewports from growing on window resize and leaving a black gap beside the QLabel.
+  3. **Viewport centering.** `addStretch()` bookends on the QHBoxLayout keep the three viewports centered instead of left-aligned.
+  4. **Buffer-lifetime safety.** Added `QImage(...).copy()` + `np.ascontiguousarray()` to prevent garbage frames from dangling numpy buffer references — a subtle but real crash/flicker source on macOS.
+  
+  Per the team's "don't edit other folders" convention, the patched file lives at `Kyle/vision/dashboard/Project_GUI.py` with Steph's original untouched.
+
+### CV Pipeline + Serial Protocol
+
+- **Dual-mode pipeline merged** (`18975c4`): Wen's MediaPipe finger-glove tracking was integrated alongside the existing YOLO silhouette pipeline. Both pipelines now run every frame in `vision_send.py`. A physical button on the ESP32 toggles between Mode 0 (silhouette mask, pot-controlled color) and Mode 1 (fingertip colored dots). The serial protocol was extended with a `MODE_FINGERTIPS` (0x01) packet type carrying up to 10 fingertip positions with per-finger RGB colors, and mode-change notification bytes (0x10/0x11) from ESP32 → Python.
+
+### ESP32 Firmware
+
+- **Dual-mode rendering** (`18975c4`): The firmware state machine now parses both `MODE_MASK` (512-byte bit-packed silhouette) and `MODE_FINGERTIPS` (variable-length position+color list). Fingertips render as 3×3 pixel blocks for visibility at 2mm pitch. A hardware button on GPIO 33 with debounce toggles between modes and notifies the Python host.
+
+### Documentation / Repo Hygiene
+
+- **Pot description corrected** (`32d47a7`): Previous docs said the potentiometer controls brightness. It actually controls a white→red color lerp on the silhouette — a meaningful functional distinction for anyone wiring or demoing the rig.
+
+- **WIRING.md HUB75 pin table fixed** (`c898c6b`): Pin numbering was corrected to match the actual Waveshare RGB-Matrix-P2 silkscreen. Incorrect pin numbers would lead to miswiring — a hardware-damaging mistake on an HUB75 panel.
+
+- **Root `.gitignore` added** (`4245deb`): Covers `.env`, `__pycache__`, `.venv`, `.DS_Store`, `.claude/`, `.firecrawl/`, and `checker_tile.png` (runtime-generated). Also `git rm --cached Steph/.env` — it was tracked as an empty file without ignore coverage, meaning the next `git add .` could silently commit a real `GEMINI_API_KEY`.
+
+### Evolution Timeline
+
+```mermaid
+gitGraph
+    commit id: "735a33c" tag: "docs" type: HIGHLIGHT
+    commit id: "10cd864" tag: "GUI-Wen"
+    commit id: "32d47a7" tag: "docs-fix"
+    commit id: "7792982" tag: "docs" type: HIGHLIGHT
+    commit id: "c898c6b" tag: "wiring-fix"
+    commit id: "4d4791f" tag: "docs" type: HIGHLIGHT
+    commit id: "18975c4" tag: "dual-mode"
+    commit id: "1f930b3" tag: "GUI-merge"
+    commit id: "ae879e1" tag: "docs" type: HIGHLIGHT
+    commit id: "4245deb" tag: "GUI-patch"
+```
+
+### Subsystem touch map
+
+| Commit | CV Pipeline | Serial Protocol | ESP32 Firmware | GUI / Dashboard | Docs / Repo |
+|--------|:-----------:|:---------------:|:--------------:|:---------------:|:-----------:|
+| `10cd864` Wen GUI update | | | | ✅ | |
+| `32d47a7` pot description fix | | | | | ✅ |
+| `c898c6b` WIRING.md pin fix | | | | | ✅ |
+| `18975c4` dual-mode merge | ✅ | ✅ | ✅ | | |
+| `1f930b3` GUI merge | | | | ✅ | |
+| `4245deb` GUI patch + .gitignore | | | | ✅ | ✅ |
+
+### Trajectory summary
+
+The project has crossed from **"single-pipeline proof-of-concept"** into **"multi-mode integrated system."** Commit `18975c4` was the structural inflection point — it doubled the pipeline width (YOLO + MediaPipe), added a hardware mode toggle, and extended the serial protocol. The subsequent GUI work (`10cd864` → `1f930b3` → `4245deb`) shows the team converging on a demo-ready dashboard, with Wen providing the visual design and Kyle patching cross-platform display bugs. The documentation fixes (`32d47a7`, `c898c6b`) indicate the hardware rig is physically built and being validated against real wiring.
+
+### Code Health Summary
+
+**Overall Grade: B−**
+
+This is a well-structured student project with clear separation between vision pipeline, serial protocol, ESP32 firmware, and documentation tooling. The serial protocol is thoughtfully designed (CRC16, ACK/NAK, framing, mode negotiation). Documentation (WIRING.md) is exceptional.
+
+**Strengths:** Clean serial protocol with proper framing and CRC. Solid firmware state machine. Good defensive coding in `pack_mask`/`unpack_mask` with validation. The doc-agent swarm is an ambitious meta-tooling layer.
+
+**Weaknesses:** The vision pipeline runs *both* YOLO and MediaPipe every frame regardless of mode — a significant performance waste (PERF-001). `pack_mask` has a subtle float-input bug that silently produces black frames (RELIABILITY-001). `vision.py` and `vision_send.py` duplicate ~80% of their pipeline code (VISION-001). The `SerialSender` lacks context-manager support, risking leaked file descriptors. The firmware's CRC verification copies 513 bytes onto a constrained ESP32 stack every loop iteration.
+
+**3 must-fix items** identified: serial port resource leak, wasted dual-inference per frame, and the float-mask silent-corruption bug.
+
+---
