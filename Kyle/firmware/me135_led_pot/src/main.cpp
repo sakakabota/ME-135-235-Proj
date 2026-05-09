@@ -69,6 +69,7 @@ static uint8_t  rxModeByte  = 0;
 
 // ---- Button ----
 static bool     lastButtonState = HIGH;
+static bool     debouncedButtonState = HIGH;
 static uint32_t lastDebounceMs = 0;
 
 // ---- Fingertip state (mode 1) ----
@@ -151,7 +152,7 @@ static RxResult pollFrame() {
         case RX_MODE:
             rxModeByte = b;
             if (rxModeByte == MODE_MASK) {
-                if (rxLen > PAYLOAD_BYTES) { resetRx(); return RX_SYNC_ERROR; }
+                if (rxLen != PAYLOAD_BYTES) { resetRx(); return RX_SYNC_ERROR; }
             } else if (rxModeByte == MODE_FINGERTIPS) {
                 if (rxLen > (1 + MAX_FINGERTIPS * 5)) { resetRx(); return RX_SYNC_ERROR; }
             } else {
@@ -193,11 +194,15 @@ static RxResult pollFrame() {
                 uint16_t calc = crc16_ccitt(crcBuf, 1 + rxLen);
                 resetRx();
                 if (calc != rxCrc) return RX_CRC_ERROR;
+                if (rxModeByte != currentMode) return RX_SYNC_ERROR;
                 if (rxModeByte == MODE_MASK) {
                     memcpy(framebuf, rxbuf, PAYLOAD_BYTES);
                 } else if (rxModeByte == MODE_FINGERTIPS) {
                     fingertipCount = (rxLen > 0) ? rxbuf[0] : 0;
                     if (fingertipCount > MAX_FINGERTIPS) fingertipCount = MAX_FINGERTIPS;
+                    if (rxLen < (uint16_t)(1 + fingertipCount * 5)) {
+                        return RX_SYNC_ERROR;
+                    }
                     for (int i = 0; i < fingertipCount; i++) {
                         int off = 1 + i * 5;
                         fingertips[i].x = rxbuf[off];
@@ -207,7 +212,6 @@ static RxResult pollFrame() {
                         fingertips[i].b = rxbuf[off + 4];
                     }
                 }
-                currentMode = rxModeByte;
                 return RX_OK;
             }
         }
@@ -289,10 +293,14 @@ void loop() {
         lastDebounceMs = millis();
     }
     if ((millis() - lastDebounceMs) > DEBOUNCE_MS) {
-        if (reading == LOW) {  // pressed (pull-up)
-            currentMode = (currentMode == MODE_MASK) ? MODE_FINGERTIPS : MODE_MASK;
-            fb_dirty = true;
-            Serial.write(currentMode == MODE_MASK ? MODE_NOTIFY_0 : MODE_NOTIFY_1);
+        if (reading != debouncedButtonState) {
+            bool previousDebouncedState = debouncedButtonState;
+            debouncedButtonState = reading;
+            if (debouncedButtonState == LOW && previousDebouncedState == HIGH) {  // pressed (pull-up)
+                currentMode = (currentMode == MODE_MASK) ? MODE_FINGERTIPS : MODE_MASK;
+                fb_dirty = true;
+                Serial.write(currentMode == MODE_MASK ? MODE_NOTIFY_0 : MODE_NOTIFY_1);
+            }
         }
     }
     lastButtonState = reading;
