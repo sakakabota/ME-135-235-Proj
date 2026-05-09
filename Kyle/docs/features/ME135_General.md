@@ -1847,3 +1847,432 @@ However, the project has a **critical integration-breaking defect**: the hardwar
 Secondary issues include missing camera-open validation (delayed confusing failures), resource leaks on exceptions in `main.py`, and a fully stale protocol spec. The codebase needs one focused consistency pass to become deployable.
 
 ---
+## v11 — 2026-05-08 21:08 — `32d47a7`
+
+### What Changed
+
+This window covers the project's transition from a planning/scaffolding phase into a **working end-to-end pipeline**: camera → YOLO segmentation → 64×64 binary mask → USB serial → ESP32 → HUB75 LED panel. Four meaningful commits drive the story; the remaining five are auto-generated doc reports (`[skip ci]`).
+
+### CV Pipeline (`vision/`)
+
+- **`vision.py` — standalone YOLO person-segmentation viewer** (`9087b6c`)
+  Added a complete OpenCV + YOLOv8 pipeline that grabs frames from a USB camera, runs `yolov8n-seg` instance segmentation filtered to the COCO "person" class, ORs all person masks into a single binary silhouette, cleans it with morphological close + contour filtering, and downscales to 64×64. Three preview windows (raw + contours, clean silhouette, pixelated 64×64). Interactive confidence trackbar and pause/save controls. *Why it matters:* this is the project's "eyes" — everything downstream depends on the quality of this mask.
+
+- **`vision_send.py` — pipeline + serial TX to ESP32** (`9087b6c`)
+  Mirrors `vision.py` but bolts on a `SerialSender` that ships each 64×64 frame to the ESP32 at ~30 fps (throttled). Adds `--no-serial` flag for CV-only tuning, auto-detection of USB-serial ports (macOS + Linux), and a clean stats summary on exit (sent/ack/nak/success-rate). *Why it matters:* bridges the gap between laptop-side vision and the physical display.
+
+### Serial Protocol (`vision/serial_protocol.py`)
+
+- **Framed binary protocol with CRC + retries** (`9087b6c`)
+  Implements a compact wire format: `[0xAA 0x55][LEN_H LEN_L][512B payload][CRC16][0x55 0xAA]`. Payload is row-major MSB-first bit-packed (64×64 ÷ 8 = 512 bytes). CRC-16/CCITT-FALSE over payload only. 50 ms ACK timeout, up to 3 retries. The `SerialSender` class handles port opening, packet building, and ACK/NAK handshake. *Why it matters:* at 1 Mbaud, a 520-byte frame transmits in ~4.2 ms — well under the 33 ms budget for 30 fps, leaving headroom for retries without dropping frames.
+
+### ESP32 Firmware (`firmware/me135_led_pot/`)
+
+- **Full HUB75 display firmware with RX state machine + pot color lerp** (`9087b6c`)
+  Written for ESP32 DevKitC driving a Waveshare RGB-Matrix-P2 64×64 via the `ESP32-HUB75-MatrixPanel-DMA` library. Features:
+  - **RX state machine** (9 states) that parses the framed serial protocol byte-by-byte, validates CRC, and ACKs/NAKs.
+  - **Potentiometer input** on GPIO 34 (ADC1) with EWMA smoothing (`α = 0.1`). Normalized to `[0, 1]` and used for a white→red color lerp on the silhouette.
+  - **Dirty-flag rendering**: panel only redraws when a new frame arrives or the pot moves ≥ 1%.
+  - **5-second watchdog**: blanks the panel if the Mac stops sending, auto-recovers on resume.
+  - `platformio.ini` pins the ESP-IDF platform to `espressif32@6.5.0` and pulls `ESP32-HUB75-MatrixPanel-DMA@^3.0.11`.
+
+- **Comprehensive wiring documentation** (`firmware/WIRING.md`, `firmware/me135_led_pot/README.md`) (`9087b6c`)
+  Full 16-pin HUB75E pinout table, power wiring (separate 5V/3A PSU, mandatory common ground, bulk capacitor recommendation), strapping-pin caveat for GPIO 12, optional 74HCT245 level-shifting guide, and a 9-step bring-up checklist. *Why it matters:* this is a hardware project — miswiring destroys hours. The docs prevent that.
+
+### Documentation & Project Context
+
+- **Switched project target to Waveshare RGB-Matrix-P2 64×64 (HUB75)** (`90363fc`)
+  Updated `CLAUDE.md` / project context documents to reflect the actual hardware (previously referenced a generic LED panel). Anchors all downstream agent outputs to the correct display spec.
+
+- **Fixed pot description — "triggers effects," not "brightness"** (`32d47a7`, HEAD)
+  Corrected misleading phrasing in `CLAUDE.md` that said the potentiometer controls brightness. In reality, it triggers a white→red color lerp — a visual *effect*, not a brightness dial. The commit message notes this was caught while syncing the portfolio site, where the wrong fact had already propagated.
+
+### Infrastructure / Maintenance
+
+- **Archived stale `agent_outputs/` + fixed doc-hook auto-commit loop** (`fa3fc0f`)
+  Cleaned up obsolete agent output files from the orchestrator's earlier runs. Fixed a bug where the post-commit doc-generation hook would trigger its own commit, creating an infinite loop. *Why it matters:* the five consecutive `[skip ci]` auto-doc commits visible in the log are evidence this loop was firing before the fix landed.
+
+### Evolution Timeline
+
+```mermaid
+gitGraph
+    commit id: "90363fc" tag: "HUB75 context" type: HIGHLIGHT
+    commit id: "1ea86b2" type: REVERSE
+    commit id: "9087b6c" tag: "v0.1 end-to-end" type: HIGHLIGHT
+    commit id: "b37b9d1" type: REVERSE
+    commit id: "7df3343" type: REVERSE
+    commit id: "4283675" type: REVERSE
+    commit id: "6c815f7" type: REVERSE
+    commit id: "fa3fc0f" tag: "fix ci loop"
+    commit id: "735a33c" type: REVERSE
+    commit id: "32d47a7" tag: "HEAD: pot doc fix"
+```
+
+### Subsystems touched per commit
+
+| Commit | Subsystems | Significance |
+|--------|-----------|--------------|
+| `90363fc` | 📄 Docs | Rebase project context onto Waveshare HUB75 panel |
+| `9087b6c` | 👁 CV Pipeline · 📡 Serial Protocol · 🔌 ESP32 Firmware · 📄 Docs | **Landmark** — full pipeline from camera to physical LEDs |
+| `fa3fc0f` | ⚙️ CI / Infra | Archive stale outputs, break auto-commit loop |
+| `32d47a7` | 📄 Docs | Fix misleading pot description in CLAUDE.md |
+
+> Commits marked REVERSE in the graph are auto-generated doc reports (`[skip ci]`) — no code changes.
+
+### Architecture snapshot (as of HEAD)
+
+```mermaid
+flowchart LR
+    CAM[USB Camera<br>640×480] -->|frame| YOLO[YOLOv8n-seg<br>person filter]
+    YOLO -->|binary mask| DOWN[Downscale<br>64×64]
+    DOWN -->|512 B packed| SER[Serial Protocol<br>CRC16 + ACK/NAK]
+    SER -->|USB 1 Mbaud| ESP[ESP32<br>RX state machine]
+    POT[10kΩ Pot<br>GPIO 34] -->|ADC + EWMA| ESP
+    ESP -->|HUB75 DMA| LED[64×64 LED Panel<br>Waveshare P2]
+
+    style CAM fill:#e0f0ff,stroke:#3388cc
+    style YOLO fill:#fff3cd,stroke:#cc9900
+    style DOWN fill:#fff3cd,stroke:#cc9900
+    style SER fill:#d4edda,stroke:#28a745
+    style ESP fill:#f8d7da,stroke:#dc3545
+    style POT fill:#f8d7da,stroke:#dc3545
+    style LED fill:#e2d5f1,stroke:#6f42c1
+```
+
+### System Architecture
+
+```mermaid
+flowchart TD
+    %% ── Camera Layer ──────────────────────────────────────────────────────────
+    subgraph CAM_LAYER ["📷 Camera Layer"]
+        PS3["Sony PS3 Eye\nUSB · gspca_ov534\n640×480 @ 60 fps\nBGR8"]
+    end
+
+    %% ── Jetson Host ───────────────────────────────────────────────────────────
+    subgraph JETSON ["🖥️ Jetson Nano / Orin  —  CPU + CUDA GPU"]
+        direction TB
+
+        subgraph CAPTURE ["Capture  (CPU)"]
+            VCAP["cv2.VideoCapture\nCAP_V4L2 / CAP_AVFOUNDATION\n640×480 BGR · 921,600 B/frame"]
+        end
+
+        subgraph INFER ["Inference  (GPU preferred)"]
+            YOLO["YOLOv8n-seg\nclass=person (COCO id 0)\nINFER_IMGSZ=640\nyolov8n-seg.pt  ~6 MB\nconf trackbar 5–95%"]
+        end
+
+        subgraph MASK_PROC ["Mask Processing  (CPU)"]
+            MERGE["OR-merge N person masks\nN×(mh×mw) float32 → 640×480 uint8\n307,200 B silhouette"]
+            MORPH["morphologyEx CLOSE\n5×5 ellipse kernel\nsmooths jagged edges"]
+            CFILTER["findContours + area filter\nmin_area = 0.2% of frame\n≈ 614 px²  drops stray bits"]
+            REDRAW["drawContours FILLED\nclean binary mask\n640×480 uint8 · 307,200 B"]
+            RESIZE["cv2.resize INTER_AREA\n640×480 → 64×64\n4,096 B  (panel-native res)"]
+            BTHRESH["cv2.THRESH_BINARY thr=96\nbinary uint8 {0,255}"]
+        end
+
+        subgraph SERIAL_LAYER ["Serial TX  (CPU)  — serial_protocol.py"]
+            PACK["pack_mask()\nnp.packbits MSB-first row-major\n4,096 B → 512 B  (8:1 compression)"]
+            CRC_PY["crc16_ccitt()\npoly=0x1021 init=0xFFFF\nover 512-B payload"]
+            FRAME_BUILD["_build_packet()\n[0xAA 0x55][LEN 0x0200]\n[512 B payload]\n[CRC_H CRC_L]\n[0x55 0xAA]  = 520 B total"]
+            SENDER["SerialSender\n1,000,000 baud · 8N1\nTX throttle ≤ 30 fps\n50 ms ACK timeout · 3 retries"]
+        end
+    end
+
+    %% ── Physical Wire ─────────────────────────────────────────────────────────
+    subgraph WIRE ["🔌 USB-CDC  (USB-to-UART)"]
+        UART["520 B/frame · ~5.2 ms transit\n@ 1 Mbaud · 8N1\nACK=0x06 · NAK=0x15"]
+    end
+
+    %% ── ESP32 ─────────────────────────────────────────────────────────────────
+    subgraph ESP32 ["⚡ ESP32 DevKitC  —  Arduino / FreeRTOS"]
+        direction TB
+
+        subgraph RX_BLOCK ["Serial RX  (loop)"]
+            RXBUF["HardwareSerial RX buf\n2048 B  (setRxBufferSize)"]
+            SM["9-state byte parser\nRX_WAIT_AA→RX_WAIT_55\n→LEN→PAYLOAD→CRC→END\n100 ms frame timeout"]
+            CRC_C["crc16_ccitt()\npoly=0x1021  matches Python"]
+            FB["framebuf[512]\nlast-good payload\n(retained on CRC error)"]
+        end
+
+        subgraph POT_BLOCK ["Analog Input  (loop)"]
+            POT["GPIO34 ADC1_CH6\n12-bit · 11 dB atten\n0–4095 raw → t∈[0,1]"]
+            EWMA["EWMA  α=0.1\nsmooths pot jitter\nchange thr ≥ 0.01"]
+            LERP["Color lerp\nt=0 → white(255,255,255)\nt=1 → red(255,0,0)\nRGB888 per-pixel"]
+        end
+
+        subgraph RENDER_BLOCK ["Render  (conditional)"]
+            RENDER["renderFrame(r,g,b)\nbit-unpack 512 B\n4,096 drawPixelRGB888(x,y)\nredraw only if dirty or t changed"]
+            DMA_LIB["ESP32-HUB75-MatrixPanel-DMA\nv3.0.11  I²S DMA engine\n8-bit color depth\nI2S_PARALLEL peripheral"]
+        end
+
+        WD["5 s Watchdog\nno frame → blank panel\nmemset(framebuf,0,512)"]
+    end
+
+    %% ── Display Layer ─────────────────────────────────────────────────────────
+    subgraph PANEL ["🟥 LED Display"]
+        HUB75["16-pin IDC ribbon  HUB75E\nR1,G1,B1,R2,G2,B2\nA,B,C,D,E · CLK,LAT,OE\n3.3V logic · 1/32 scan"]
+        DISPLAY["Waveshare RGB-Matrix-P2\n64×64  ·  4,096 RGB LEDs\n2 mm pitch · 128×128 mm\n5 V / 3 A PSU (separate)"]
+    end
+
+    %% ── Doc / Orchestration (side path) ──────────────────────────────────────
+    subgraph DOCS ["📝 Documentation Swarm  (offline)"]
+        ORCH["orchestrator.py\n7 parallel Claude agents\nOpus-4 / Sonnet-4"]
+        DAGENT["doc_agent.py\nHistorian · Architect · Critic\ngit diff → Markdown report"]
+        GDRIVE["gdrive_sync.py\nfeature doc writer\nrclone → Google Drive"]
+    end
+
+    %% ── Edges ─────────────────────────────────────────────────────────────────
+    PS3 -->|"USB  921,600 B/frame BGR\n@60 fps  raw"| VCAP
+    VCAP -->|"np.ndarray HxWx3"| YOLO
+    YOLO -->|"masks (N,mh,mw) float32\nboxes (N,4) int"| MERGE
+    MERGE --> MORPH --> CFILTER --> REDRAW --> RESIZE --> BTHRESH
+    BTHRESH -->|"64×64 uint8\n4,096 B"| PACK
+    PACK -->|"512 B  bytes"| CRC_PY --> FRAME_BUILD --> SENDER
+    SENDER -->|"520 B frame\n≤30 fps"| UART
+    UART -->|"ACK 0x06 / NAK 0x15\n50 ms timeout"| SENDER
+    UART --> RXBUF --> SM --> CRC_C
+    CRC_C -->|"pass"| FB
+    CRC_C -->|"fail → NAK"| SM
+    POT --> EWMA --> LERP
+    FB --> RENDER
+    LERP --> RENDER
+    RENDER --> DMA_LIB
+    DMA_LIB -->|"parallel I²S\n13 GPIO lines\n3.3V"| HUB75 --> DISPLAY
+    WD -->|"5 s no-frame\nblank"| DMA_LIB
+
+    ORCH -.->|"spawns"| DAGENT
+    DAGENT -.->|"uses"| GDRIVE
+
+    %% ── Styles ────────────────────────────────────────────────────────────────
+    style CAM_LAYER  fill:#3b2a1a,color:#ffd,stroke:#f90
+    style JETSON     fill:#0d2137,color:#cef,stroke:#39f
+    style WIRE       fill:#1a1a3b,color:#ccf,stroke:#66f
+    style ESP32      fill:#0d2a0d,color:#cfc,stroke:#3c3
+    style PANEL      fill:#2a0d0d,color:#fcc,stroke:#c33
+    style DOCS       fill:#2a2a2a,color:#ddd,stroke:#888
+```
+
+### Data Flow
+
+One frame's end-to-end journey — camera capture → HUB75 LED panel.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant EYE   as 📷 PS3 Eye
+    participant VCAP  as cv2.VideoCapture<br/>(CPU)
+    participant YOLO  as YOLOv8n-seg<br/>(GPU / CPU)
+    participant PROC  as Mask Processor<br/>(CPU)
+    participant PKT   as serial_protocol<br/>SerialSender
+    participant UART  as USB-CDC<br/>1 Mbaud
+    participant ESP   as ESP32<br/>RX State Machine
+    participant DISP  as HUB75 Panel<br/>64×64 LEDs
+
+    Note over EYE,VCAP: t = 0 ms — frame capture
+    EYE  ->>+VCAP: raw BGR frame
+    VCAP -->>-YOLO: 640×480 BGR<br/>np.ndarray · 921,600 B
+
+    Note over YOLO: t ≈ 0 – 2 ms GPU dispatch
+    YOLO ->>+PROC: N person masks (N×mh×mw float32)<br/>N bounding boxes (N×4 int)
+
+    Note over PROC: t ≈ 10–30 ms (Jetson GPU)<br/>or 30–80 ms (CPU fallback)
+    PROC ->> PROC: OR-merge masks → silhouette<br/>640×480 uint8 · 307,200 B
+    PROC ->> PROC: morphologyEx CLOSE (5×5)<br/>~307,200 B unchanged
+    PROC ->> PROC: findContours + area filter<br/>drop contours < 614 px²
+    PROC ->> PROC: drawContours FILLED → clean mask
+    PROC ->> PROC: cv2.resize INTER_AREA 640×480 → 64×64<br/>307,200 B → 4,096 B
+    PROC ->> PROC: THRESH_BINARY thr=96<br/>uint8 {0,255}
+    PROC -->>-PKT: 64×64 uint8 mask · 4,096 B<br/>(small = binary silhouette)
+
+    Note over PKT: t ≈ 32–82 ms — pack & frame
+    PKT  ->> PKT: (small > 0).astype(uint8)<br/>normalize to {0,1}
+    PKT  ->> PKT: np.packbits MSB-first row-major<br/>4,096 B → 512 B  (8:1 compression)
+    PKT  ->> PKT: crc16_ccitt(payload)<br/>poly=0x1021, init=0xFFFF → 2 B
+    PKT  ->> PKT: _build_packet()<br/>[0xAA 0x55][0x02 0x00][512 B][CRC_H CRC_L][0x55 0xAA]<br/>Total = 520 B
+
+    Note over PKT,UART: TX gate: Δt ≥ 33.3 ms (≤30 fps throttle)
+    PKT  ->>+UART: serial.write(520 B)<br/>+ serial.flush()
+
+    Note over UART: t ≈ 32–82 ms + 5.2 ms transit<br/>520 B × 10 bits / 1,000,000 bps = 5.2 ms
+    UART ->>+ESP: 520 B over USB-CDC
+
+    Note over ESP: t ≈ 37–88 ms — parse & validate
+    ESP  ->> ESP: 9-state byte parser<br/>sync on 0xAA 0x55
+    ESP  ->> ESP: read LEN = 0x0200 = 512 ✓
+    ESP  ->> ESP: buffer 512 B payload into rxbuf[]
+    ESP  ->> ESP: read CRC bytes (2 B)
+    ESP  ->> ESP: read end marker 0x55 0xAA
+    ESP  ->> ESP: crc16_ccitt(rxbuf, 512)<br/>compare vs received CRC
+
+    alt CRC OK
+        ESP  ->> ESP: memcpy(framebuf, rxbuf, 512)
+        ESP  ->> ESP: fb_dirty = true
+        ESP -->>-UART: ACK · 0x06 · 1 B
+        UART -->>-PKT: 0x06 received within 50 ms
+        PKT  ->> PKT: frames_acked++
+
+        Note over ESP,DISP: t ≈ 38–89 ms — render
+        ESP  ->> ESP: pot EWMA → t ∈ [0,1]<br/>color lerp (255,255,255)→(255,0,0)
+        ESP  ->>+DISP: renderFrame(r,g,b)<br/>bit-unpack 512 B<br/>4,096 × drawPixelRGB888(x,y,r,g,b)
+        DISP ->> DISP: I²S DMA scan-out<br/>1/32 scan · 16 GPIO lines
+        DISP -->>-ESP: (display updated continuously by DMA)
+
+    else CRC Error
+        ESP  ->> UART: NAK · 0x15 · 1 B
+        UART ->> PKT:  0x15 received
+        PKT  ->> PKT:  frames_naked++<br/>retry up to 3×
+        PKT  ->> UART: retransmit 520 B
+    end
+
+    Note over EYE,DISP: Next frame gate at t + 33.3 ms (30 fps cap)<br/>Watchdog: panel blanks if no valid frame for 5 s
+```
+
+### Key Byte Counts Summary
+
+| Stage | Size | Type |
+|---|---|---|
+| Raw camera frame | 921,600 B | 640×480 BGR uint8 |
+| YOLO mask output (per person) | variable | float32 (mh×mw) |
+| Merged silhouette | 307,200 B | 640×480 uint8 |
+| Downscaled mask | 4,096 B | 64×64 uint8 |
+| Bit-packed payload | **512 B** | row-major MSB-first |
+| Full serial frame | **520 B** | +4 B header +2 B len +2 B CRC |
+| ACK / NAK reply | 1 B | 0x06 / 0x15 |
+| Compression ratio | **1800:1** | raw frame → wire payload |
+
+### Module Dependency Graph
+
+```mermaid
+graph LR
+    %% ══════════════════════════════════════════════════════════════════════════
+    %% Node Definitions — grouped by subsystem
+    %% ══════════════════════════════════════════════════════════════════════════
+
+    %% ── Vision subsystem ─────────────────────────────────────────────────────
+    subgraph VISION ["👁️  Vision Subsystem  (Kyle/vision/)"]
+        direction TB
+        VS["vision_send.py<br/>────────────────<br/>main() entry point<br/>open_camera()<br/>autodetect_port()<br/>TX throttle ≤ 30 fps"]
+        VV["vision.py<br/>────────────────<br/>main() entry point<br/>open_camera()<br/>standalone preview<br/>no serial TX"]
+        SP["serial_protocol.py<br/>────────────────<br/>class SerialSender<br/>  send_frame(mask: ndarray) → bool<br/>  close()<br/>  .frames_sent / acked / naked<br/>pack_mask(mask) → bytes<br/>unpack_mask(data) → ndarray<br/>crc16_ccitt(data, init) → int"]
+    end
+
+    %% ── Documentation subsystem ──────────────────────────────────────────────
+    subgraph DOCSWARM ["📝  Documentation Swarm  (Kyle/)"]
+        direction TB
+        DA["doc_agent.py<br/>────────────────<br/>run_historian()<br/>run_architect()<br/>run_critic()<br/>db_connect() / db_save_proposals()<br/>db_record_decision()<br/>SQLite: docs/history.db"]
+        GS["gdrive_sync.py<br/>────────────────<br/>sync_to_drive(sections, proposals)<br/>detect_features(changed_files) → list<br/>get_changed_files(repo) → list<br/>compose_feature_section()<br/>append_to_feature_doc()<br/>sync_features_to_drive()"]
+        GU["gdrive_setup.py<br/>────────────────<br/>main() one-time OAuth<br/>rclone config create<br/>rclone config reconnect<br/>test rclone sync"]
+        OR["orchestrator.py<br/>────────────────<br/>run_agent() async<br/>7 parallel Claude agents<br/>execute_tool(write_file/read_file)<br/>MODEL_ARCHITECT = opus-4-6<br/>MODEL_CODER = sonnet-4-6"]
+    end
+
+    %% ── 3rd-party Python ─────────────────────────────────────────────────────
+    subgraph PYLIBS ["📦  Python Libraries"]
+        direction TB
+        CV2["opencv-python<br/>cv2"]
+        NP["numpy"]
+        UL["ultralytics<br/>YOLOv8"]
+        SER["pyserial<br/>serial"]
+        ANT["anthropic SDK<br/>claude-opus/sonnet-4-6"]
+        SQL["sqlite3<br/>(stdlib)"]
+        RC["rclone<br/>(subprocess)"]
+        GIT["git<br/>(subprocess)"]
+    end
+
+    %% ── Firmware ─────────────────────────────────────────────────────────────
+    subgraph FW ["⚡  ESP32 Firmware  (C++)"]
+        MC["main.cpp<br/>────────────────<br/>pollFrame() state machine<br/>renderFrame(r,g,b)<br/>crc16_ccitt() mirrors Python<br/>EWMA pot smoothing<br/>5 s watchdog"]
+        PIO["platformio.ini<br/>────────────────<br/>espressif32 @ 6.5.0<br/>ESP32-HUB75-MatrixPanel-DMA^3.0.11<br/>Adafruit GFX ^1.11.9"]
+        HUB["ESP32-HUB75-MatrixPanel-DMA<br/>I²S DMA library"]
+    end
+
+    %% ══════════════════════════════════════════════════════════════════════════
+    %% Dependency Edges — Python imports
+    %% ══════════════════════════════════════════════════════════════════════════
+
+    %% vision_send.py imports
+    VS -->|"from serial_protocol import SerialSender"| SP
+    VS -->|"import cv2"| CV2
+    VS -->|"import numpy as np"| NP
+    VS -->|"from ultralytics import YOLO"| UL
+
+    %% vision.py imports
+    VV -->|"import cv2"| CV2
+    VV -->|"import numpy as np"| NP
+    VV -->|"from ultralytics import YOLO"| UL
+
+    %% serial_protocol.py imports
+    SP -->|"import numpy as np"| NP
+    SP -->|"import serial"| SER
+
+    %% doc_agent.py imports
+    DA -->|"from gdrive_sync import\nsync_to_drive\ndetect_features\nget_changed_files"| GS
+    DA -->|"import anthropic"| ANT
+    DA -->|"import sqlite3"| SQL
+    DA -->|"git subprocess"| GIT
+
+    %% gdrive_sync.py imports
+    GS -->|"rclone subprocess"| RC
+    GS -->|"git subprocess"| GIT
+
+    %% gdrive_setup.py imports
+    GU -->|"rclone subprocess"| RC
+
+    %% orchestrator.py imports
+    OR -->|"import anthropic"| ANT
+
+    %% firmware
+    PIO -->|"lib_deps"| HUB
+    MC -->|"#include<br/>ESP32-HUB75-MatrixPanel-I2S-DMA.h"| HUB
+
+    %% Cross-subsystem protocol boundary
+    VS -.->|"520 B UART frame\n1 Mbaud USB-CDC"| MC
+
+    %% ══════════════════════════════════════════════════════════════════════════
+    %% Styles
+    %% ══════════════════════════════════════════════════════════════════════════
+    style VISION    fill:#0d2137,color:#cef,stroke:#39f
+    style DOCSWARM  fill:#1a1a1a,color:#ddd,stroke:#888
+    style PYLIBS    fill:#1a2a1a,color:#cfc,stroke:#4a4
+    style FW        fill:#2a0d0d,color:#fcc,stroke:#c33
+
+    style VS fill:#0a3d62,color:#fff
+    style VV fill:#0a3d62,color:#fff
+    style SP fill:#1a5276,color:#fff,stroke:#5dade2
+
+    style DA fill:#2c2c2c,color:#eee
+    style GS fill:#2c2c2c,color:#eee
+    style GU fill:#2c2c2c,color:#eee
+    style OR fill:#2c2c2c,color:#eee
+
+    style MC fill:#5d1a1a,color:#fdd
+    style PIO fill:#3d1a1a,color:#fdd
+    style HUB fill:#4a1a1a,color:#fbb
+```
+
+### Interface Boundary Summary
+
+| Module | Exports (Public API) | Consumers |
+|---|---|---|
+| `serial_protocol.py` | `SerialSender.send_frame()`, `pack_mask()`, `unpack_mask()`, `crc16_ccitt()` | `vision_send.py` |
+| `gdrive_sync.py` | `sync_to_drive()`, `detect_features()`, `get_changed_files()` | `doc_agent.py` |
+| `vision_send.py` | CLI entry point — no exported API | (top-level runnable) |
+| `vision.py` | CLI entry point — no exported API | (top-level runnable) |
+| `orchestrator.py` | CLI entry point — no exported API | (top-level runnable) |
+| `doc_agent.py` | CLI entry point — no exported API | git pre-push hook |
+| `main.cpp` | Wire protocol only (520 B UART frame) | `SerialSender` in Python |
+
+### Code Health Summary
+
+**Overall Grade: B−**
+
+The codebase is well-structured for a university project. The serial protocol (Python ↔ ESP32) is solid: CRC16 with ACK/NAK retries, a clean state machine on the firmware side, and a proper watchdog. Documentation (WIRING.md) is exceptional—production-quality troubleshooting tables.
+
+**Key weaknesses:**
+
+- **Duplication is the #1 debt.** `vision.py` and `vision_send.py` share ~120 lines of identical CV pipeline code. A bug fixed in one (try/finally) was missed in the other (PROP-001/002 are direct consequences).
+- **Resource safety is inconsistent.** `vision_send.py` has proper cleanup; `vision.py` does not. `SerialSender` lacks context-manager support.
+- **Async safety is fragile.** `doc_agent.py` uses bare mutable globals across concurrent agents.
+- **Firmware is clean** but could avoid full-panel redraws on pot-only changes.
+
+No security issues found (no credentials, no shell injection, good path-traversal guard in orchestrator).
+
+---
