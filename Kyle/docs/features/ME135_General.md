@@ -2737,3 +2737,399 @@ This is a well-structured student project with clear separation between vision p
 **3 must-fix items** identified: serial port resource leak, wasted dual-inference per frame, and the float-mask silent-corruption bug.
 
 ---
+## v14 — 2026-05-09 16:16 — `2394a9c`
+
+### What Changed
+
+## Commit `2394a9c` — Wire Serial Transport + Dual-Mode Dashboard to ESP32
+
+This is the commit that turns the GUI from a **display-only** dashboard into a **live serial transmitter** capable of driving the 64×64 HUB75 LED panel in real time. Three files changed (+1,061 / −138 lines).
+
+### GUI / Dashboard (`Project_GUI.py` — 647 lines rewritten)
+
+- **Serial transport wired in.** `PixelMirrorGUI` now owns a `SerialWorker` instance. Every frame, the vision thread emits either a 64×64 binary mask (`mask_ready_signal`) or a list of `Fingertip` objects (`tips_ready_signal`). The GUI routes whichever payload matches the ESP32's current mode to the serial worker. **Why it matters:** Previously, the dashboard could *see* the silhouette but had no way to *send* it — `vision_send.py` (the CLI tool) was the only path to the panel.
+
+- **Backpressure / frame gating.** A `_tx_in_flight` flag + 30 fps cap prevents the GUI from flooding the serial link. The GUI waits for `send_complete_signal` before emitting the next frame. **Why it matters:** Without this, Qt's queued connections would buffer unbounded frames, causing growing latency.
+
+- **MediaPipe added to VisionWorker (lazy-init, optional).** The worker thread now runs MediaPipe hand detection alongside YOLO on every frame, emitting fingertip landmarks. MediaPipe is imported with a `try/except` so the GUI still launches without it. Hands are recreated only if sensitivity parameters change. **Why it matters:** This is the integration point for Wen's finger-glove pipeline (merged in `18975c4`). The dashboard can now switch between mask and fingertip modes seamlessly based on the ESP32 button toggle.
+
+- **Context-sensitive slider panel.** In mask mode: YOLO Confidence + LED Threshold sliders. In fingertip mode: Hand Detection Confidence + Tracking Confidence sliders (these control MediaPipe sensitivity, not HSV — Wen's pipeline is landmark-based). **Why it matters:** Previous sliders were always visible and didn't adapt to the active mode.
+
+- **5-row status grid.** STATUS box rebuilt from a single label into a structured grid: MODE (color-coded), SERIAL (port/state), LINK (sent/ACK/NAK counters), CAM (fps + people count), POT. **Why it matters:** Gives real-time diagnostic feedback during bench testing without needing a terminal.
+
+- **Port management UI.** Combo box listing available serial ports + Connect / Disconnect / Refresh buttons. **Why it matters:** Previously the only way to specify a port was via CLI args to `vision_send.py`.
+
+- **Cleanup:** `try/finally` wraps the worker's main loop so `cap.release()` and `hands.close()` always fire. BLANK PANEL button added (sends all-zero frame). RE-CALIBRATE removed (was a duplicate of RESET CAMERA). Gemini AI response now renders into a `QTextEdit` instead of printing to stdout. `checker_tile.png` relocated to `assets/` subdirectory.
+
+### Serial Worker (`serial_worker.py` — 276 lines, new file)
+
+- **QObject + moveToThread facade.** Wraps `SerialSender` (from `serial_protocol.py`) on a dedicated worker thread. Slots receive mask/tips/blank requests via `QueuedConnection` so ACK waits never block the GUI thread. Shutdown uses `BlockingQueuedConnection` to guarantee the serial port is released before the thread exits. **Why it matters:** This is the bridge between the Qt event loop and the blocking serial I/O — the architectural piece that was missing.
+
+- **Reuses `serial_protocol.py` as-is.** No duplication of the wire format (CRC-16/CCITT-FALSE, `AA 55 … 55 AA` framing, MSB-first 64×64 bit-pack). The protocol module was already byte-correct against the firmware. **Why it matters:** Single source of truth for the wire format.
+
+### Test Suite (`tests/test_protocol.py` — 276 lines, new file)
+
+- **33 tests pinning the 64×64 / 512-byte wire format.** Covers: CRC vectors, MSB-first bit-pack round-trips, frame structure (start/end markers, length field, CRC position), fingertip pack/unpack, end-to-end mask encoding. Replaces archived 108×108 tests that targeted the legacy WS2812B path. **Why it matters:** Catches any accidental wire-format drift between Python and the ESP32 C firmware.
+
+### What Did NOT Change
+
+- **`serial_protocol.py`** — Untouched; already correct.
+- **ESP32 firmware (`main.cpp`)** — Untouched; the GUI now speaks the same protocol the firmware has always expected.
+- **`vision_send.py`** (CLI pipeline) — Untouched; the dashboard is a parallel UI, not a replacement.
+- **Larry's code** — Explicitly scoped out.
+
+### Evolution Timeline
+
+The project has grown from documentation fixes through pipeline merges to a fully wired GUI-to-panel path. Each commit below shows which subsystem it touched.
+
+```mermaid
+gitGraph
+   commit id: "32d47a7" tag: "docs fix" type: HIGHLIGHT
+   commit id: "c898c6b" tag: "WIRING.md fix"
+   commit id: "18975c4" tag: "vision+firmware merge"
+   commit id: "1f930b3" tag: "GUI layout merge"
+   commit id: "4245deb" tag: "GUI patch + .gitignore"
+   commit id: "2394a9c" tag: "serial dashboard" type: HIGHLIGHT
+```
+
+### Subsystem touchpoints per commit
+
+| Commit | Docs | CV Pipeline | GUI / Dashboard | Serial Protocol | ESP32 Firmware |
+|--------|------|-------------|-----------------|-----------------|----------------|
+| `32d47a7` — fix pot description | ✅ | | | | |
+| `c898c6b` — fix HUB75 pin numbers | ✅ | | | | |
+| `18975c4` — Wen's finger-glove merge | | ✅ | | ✅ | ✅ |
+| `1f930b3` — Wen's GUI layout merge | | | ✅ | | |
+| `4245deb` — patched Steph's GUI | | | ✅ | | |
+| **`2394a9c` — serial dashboard** | | ✅ | ✅ | ✅ (tests) | |
+
+### Trajectory narrative
+
+The project's arc across these commits is clear: **docs → merge partners' work → wire it all together**.
+
+1. **Foundation fixes** (`32d47a7`, `c898c6b`): Corrected misleading docs — pot triggers effects (not brightness), and the HUB75 pin table now matches the Waveshare panel.
+2. **Pipeline unification** (`18975c4`): Wen's MediaPipe fingertip tracker merged alongside the YOLO mask pipeline; ESP32 firmware gained dual-mode receive (mode 0 = mask, mode 1 = fingertips).
+3. **GUI consolidation** (`1f930b3`, `4245deb`): Layout finalized with interactive icons and checkerboard borders; Steph's GUI variant patched and adapted.
+4. **The wiring commit** (`2394a9c`): The dashboard became a real-time transmitter. SerialWorker bridges Qt signals to the existing `serial_protocol.py`. 33 tests lock the wire format. MediaPipe runs inside the GUI thread for the first time. The system is now **end-to-end capable**: camera → YOLO/MediaPipe → Qt dashboard → serial → ESP32 → HUB75 panel.
+
+**Next milestone:** Live hardware verification — plug in the ESP32, click Connect, and confirm sustained TX with low NAK rate.
+
+### System Architecture
+
+```mermaid
+flowchart TD
+    subgraph CAM["📷 PS3 Eye  ·  Sony OV534 · USB 2.0"]
+        C1["640 × 480 px · BGR24 · 60 fps\n~900 KB/frame raw\nLinux driver: gspca_ov534"]
+    end
+
+    subgraph HOST["🖥️  Jetson Nano/Orin  ·  Python 3"]
+        direction TB
+        subgraph YOLO["YOLOv8n-seg  [GPU — CUDA]"]
+            Y1["model.predict()\nimgsz=640 · conf trackbar 5–95%\nPERSON class=0 only"]
+            Y2["masks.data → CPU numpy\n(N × 640 × 480) float32\n~1.2 MB per person"]
+        end
+        subgraph CV["OpenCV CPU Pipeline"]
+            OC1["VideoCapture\nCAP_V4L2 / CAP_AVFOUNDATION\nset 640×480"]
+            OC2["morphologyEx MORPH_CLOSE\n5×5 ellipse kernel\n640×480 uint8"]
+            OC3["findContours\nfilter < 0.2% area\nclean binary silhouette"]
+            OC4["cv2.resize → 64×64\nINTER_AREA\n4,096 B uint8"]
+            OC5["threshold 96 → binary\n{0, 255} · 4,096 px"]
+        end
+        subgraph MP["MediaPipe Hands  [CPU]"]
+            MP1["Hands(max_num_hands=2)\ndetect conf ≥ 0.6"]
+            MP2["TIP_IDS [4,8,12,16,20]\nlandmark → 64×64 coords\n5 tips/hand · 10 max"]
+        end
+        subgraph PROTO["serial_protocol.py  [CPU]"]
+            P1["pack_mask()\nnp.packbits MSB-first\n64×64 → 512 B"]
+            P2["pack_fingertips()\n1 B count + N×5 B\nmax 51 B payload"]
+            P3["build_frame(mode)\nAA55 · LEN(2) · MODE(1)\n· payload · CRC16(2) · 55AA"]
+            P4["crc16_ccitt()\nCCITT-FALSE poly=0x1021\nover MODE+payload"]
+            P5["SerialSender\n1 Mbaud · 50ms ACK timeout\n3 retries · ACK/NAK loop"]
+        end
+    end
+
+    subgraph LINK["🔌 USB-CDC Serial  ·  1,000,000 baud  ·  8N1"]
+        L1["Mode 0x00 mask frame\n521 B total · ~4.2 ms tx\n↓ headroom for 60+ fps ↓"]
+        L2["Mode 0x01 fingertip frame\n≤ 61 B total · < 0.5 ms tx"]
+        L3["ACK 0x06 / NAK 0x15\nmode-change 0x10 / 0x11\n← ESP32 upstream ←"]
+    end
+
+    subgraph ESP["⚡ ESP32 DevKitC  ·  Arduino / PlatformIO"]
+        direction TB
+        subgraph RX["Serial RX State Machine"]
+            R1["RX_WAIT_AA → RX_WAIT_55\n→ RX_LEN → RX_MODE\n→ RX_PAYLOAD → RX_CRC → RX_END"]
+            R2["rxbuf[2048]\nFRAME_TIMEOUT_MS=100\nresetRx() on error"]
+            R3["crc16_ccitt() validate\nMode mismatch → NAK 0x15\nCRC OK → ACK 0x06"]
+        end
+        subgraph PERIPH["Peripherals"]
+            PE1["GPIO 34 · ADC1_CH6\n10kΩ pot · EWMA filter\nt ∈ [0.0, 1.0] white↔red"]
+            PE2["GPIO 33 · INPUT_PULLUP\nbutton · 50ms debounce\ntoggle mode → notify 0x10/0x11"]
+        end
+        subgraph RENDER["Render Engine"]
+            RN1["Mode 0: renderMask()\nfor i in 0..4095:\n  unpack bit → drawPixelRGB888\n  apply pot lerp (r=255, g/b=(1-t)×255)"]
+            RN2["Mode 1: renderFingertips()\n3×3 block per tip\ncolored dots on black"]
+            RN3["watchdog 5000ms\nblankPanel() on timeout"]
+        end
+        subgraph DMA["I2S DMA Driver"]
+            DMA1["MatrixPanel_I2S_DMA\ndouble-buffered framebuffer\nESP32 I2S parallel peripheral"]
+        end
+    end
+
+    subgraph PANEL["💡 Waveshare RGB-Matrix-P2  ·  64×64  ·  HUB75E"]
+        PA1["16-pin IDC ribbon\nR1/G1/B1 · R2/G2/B2 · A/B/C/D/E\nCLK · LAT · OE"]
+        PA2["1/32 scan rate\n4,096 RGB LEDs · 2mm pitch\n128×128 mm physical"]
+        PA3["5V / 3A PSU\nSeparate from ESP32 USB\n1000µF bulk cap"]
+    end
+
+    C1                  -->|"USB · ~900 KB/frame"| OC1
+    OC1                 -->|"640×480 BGR"| Y1
+    OC1                 -->|"640×480 RGB"| MP1
+    Y1                  --> Y2
+    Y2                  -->|"N masks ~307 KB"| OC2
+    OC2                 --> OC3
+    OC3                 --> OC4
+    OC4                 --> OC5
+    MP1                 --> MP2
+    OC5                 -->|"64×64 binary · 4 KB"| P1
+    MP2                 -->|"≤10 tips · 50 B"| P2
+    P1                  -->|"512 B packed"| P3
+    P2                  -->|"≤51 B"| P3
+    P3                  --> P4
+    P4                  -->|"521 B / ≤61 B frame"| P5
+    P5                  -->|"Mode 0 · 521 B"| L1
+    P5                  -->|"Mode 1 · ≤61 B"| L2
+    L3                  -->|"ACK/mode"| P5
+    L1                  --> R1
+    L2                  --> R1
+    R1                  --> R2
+    R2                  --> R3
+    R3                  -->|"ACK/NAK"| L3
+    R3                  -->|"512 B mask valid"| RN1
+    R3                  -->|"fingertips valid"| RN2
+    PE1                 -->|"t lerp value"| RN1
+    PE2                 -->|"mode toggle"| L3
+    RN3                 --> DMA1
+    RN1                 --> DMA1
+    RN2                 --> DMA1
+    DMA1                -->|"I2S parallel · 16 GPIOs · 3.3V logic"| PA1
+    PA1                 --> PA2
+    PA3                 --> PA2
+```
+
+| Stage | Data Type | Size | Rate |
+|---|---|---|---|
+| Camera out | BGR24 uint8 | ~900 KB/frame | 60 fps |
+| YOLO masks | float32 numpy | ~1.2 MB/person | GPU async |
+| 64×64 binary | uint8 numpy | 4,096 B | 30 fps TX |
+| Serial packet (mode 0) | bit-packed + framing | **521 B** | ≤30 fps |
+| Serial packet (mode 1) | fingertips struct | **≤61 B** | ≤30 fps |
+| HUB75 framebuffer | RGB888 DMA | **512 B logical** | continuous DMA |
+
+### Data Flow
+
+```mermaid
+sequenceDiagram
+    participant CAM  as 📷 PS3 Eye<br/>(USB · OV534)
+    participant OCV  as OpenCV<br/>(CAP_V4L2)
+    participant GPU  as YOLOv8n-seg<br/>(GPU / CUDA)
+    participant CPU  as CV Pipeline<br/>(CPU numpy)
+    participant SER  as SerialSender<br/>(serial_protocol.py)
+    participant UART as USB-CDC<br/>(1 Mbaud)
+    participant ESM  as ESP32 RxSM<br/>(state machine)
+    participant ERND as ESP32 Render<br/>(renderMask)
+    participant DMA  as I2S DMA<br/>(MatrixPanel)
+    participant LED  as HUB75 Panel<br/>(64×64 · 4096 LEDs)
+
+    Note over CAM,LED: ── One frame journey (Mode 0x00 — silhouette mask) ──
+
+    CAM  ->>  OCV  : USB frame · 640×480 BGR24<br/>~900 KB · t=0 ms
+
+    OCV  ->>  GPU  : frame numpy [480,640,3]<br/>~900 KB · t≈1 ms
+
+    Note over GPU: YOLOv8n inference<br/>imgsz=640 · person only<br/>~15–30 ms on Jetson Nano
+
+    GPU  -->> CPU  : masks.data.cpu().numpy()<br/>(N, 480, 640) float32<br/>~1.2 MB/person · t≈25 ms
+
+    CPU  ->>  CPU  : np.maximum OR masks → silhouette<br/>640×480 uint8 · ~307 KB
+
+    CPU  ->>  CPU  : morphologyEx MORPH_CLOSE<br/>5×5 ellipse · t≈27 ms
+
+    CPU  ->>  CPU  : findContours + area filter<br/>drop < 0.2% frame area
+
+    CPU  ->>  CPU  : cv2.resize(INTER_AREA)<br/>640×480 → 64×64<br/>4,096 B · t≈28 ms
+
+    CPU  ->>  CPU  : threshold(96) → binary {0,255}<br/>4,096 B bool array
+
+    CPU  ->>  SER  : mask ndarray [64,64] uint8<br/>4,096 B · t≈28 ms
+
+    Note over SER: pack_mask() →<br/>np.packbits MSB-first<br/>4096 bits → 512 B
+
+    SER  ->>  SER  : build_frame(mode=0x00)<br/>body = [0x00] + 512 B = 513 B<br/>CRC16-CCITT-FALSE over body
+
+    Note over SER: Frame layout (521 B total):<br/>AA 55 | 02 00 | 00 | [512 B] | CRC_H CRC_L | 55 AA<br/>2 + 2 + 1 + 512 + 2 + 2 = 521 B
+
+    SER  ->>  UART : serial.write(521 B)<br/>flush() · t≈28 ms
+
+    Note over UART: 521 B × 10 bits/byte ÷ 1,000,000 baud<br/>= **5.21 ms** transmission time
+
+    UART ->>  ESM  : bytes stream → RX buf (2048 B)<br/>t≈33 ms (28 + 5.2 ms)
+
+    Note over ESM: State machine:<br/>RX_WAIT_AA → RX_WAIT_55<br/>→ RX_LEN_HI/LO → RX_MODE<br/>→ RX_PAYLOAD (512 B)<br/>→ RX_CRC_HI/LO → RX_END
+
+    ESM  ->>  ESM  : crc16_ccitt(MODE + payload)<br/>compare vs received CRC<br/>t≈34 ms
+
+    alt CRC OK
+        ESM  ->>  UART : ACK 0x06 · 1 B
+        ESM  ->>  ERND : memcpy(framebuf, rxbuf, 512)<br/>512 B · fb_dirty = true
+    else CRC fail
+        ESM  ->>  UART : NAK 0x15 · 1 B
+        Note over SER: SerialSender retries<br/>up to 3× with 50 ms timeout
+    end
+
+    UART -->> SER  : ACK 0x06 · t≈34 ms<br/>round-trip complete
+
+    Note over ERND: Read GPIO34 ADC<br/>EWMA filter → t ∈ [0.0,1.0]<br/>white(t=0) ↔ red(t=1)
+
+    loop for i in 0..4095 (64×64 pixels)
+        ERND ->>  DMA  : drawPixelRGB888(x, y, r, g, b)<br/>r=255, g/b=(1−t)×255 if bit set<br/>else (0,0,0)
+    end
+
+    Note over DMA: MatrixPanel_I2S_DMA<br/>double-buffered · ESP32 I2S peripheral<br/>pushes continuously to HUB75
+
+    DMA  ->>  LED  : I2S parallel · 16 GPIO lines<br/>R1,G1,B1,R2,G2,B2,A,B,C,D,E,CLK,LAT,OE<br/>1/32 scan · 5V logic (3.3V ESP32 out)
+
+    Note over LED: 4,096 RGB LEDs refresh<br/>128×128 mm · 2mm pitch<br/>**512 B logical/frame**<br/>Total latency t≈35–50 ms
+```
+
+### Byte-count ledger — one mode-0 frame
+
+| Hop | Payload | Notes |
+|---|---|---|
+| Camera → OpenCV | ~900,000 B | 640×480 BGR24 |
+| YOLO masks → CPU | ~1,228,800 B | (N, 480, 640) float32 |
+| Silhouette after OR | 307,200 B | 640×480 uint8 |
+| After resize 64×64 | 4,096 B | uint8 pre-threshold |
+| After packbits | **512 B** | bit-packed MSB-first |
+| Serial frame (with framing) | **521 B** | +2 start +2 len +1 mode +2 CRC +2 end |
+| ESP32 framebuf[] | **512 B** | stored until next valid frame |
+| HUB75 logical | **512 B** | 4096 bits → 4096 LEDs |
+| Transmission time @ 1 Mbaud | ≈ **5.21 ms** | 521 B × 10 bits |
+| End-to-end latency | ≈ **35–50 ms** | camera → LED |
+
+### Module Dependency Graph
+
+```mermaid
+graph TD
+    %% ── Entry Points ──────────────────────────────────────────────────────────
+    subgraph ENTRY["🚀 Entry Points"]
+        ORC["orchestrator.py\n─────────────────\nmain(): asyncio.run()\nrun_agent() × 7 parallel\nexecute_tool() dispatch\nAgents: CV · Serial · HW\n         Safety · LabVIEW\n         Arch · Firmware"]
+        DOC["doc_agent.py\n─────────────────\nmain(): asyncio.run()\nPersonas:\n  📜 HISTORIAN\n  🏛  ARCHITECT\n  🔍 CRITIC\ndb_connect() → SQLite"]
+        SETUP["gdrive_setup.py\n─────────────────\nmain(): one-time\nrclone OAuth setup\nDrive folder create"]
+    end
+
+    %% ── Vision Layer ──────────────────────────────────────────────────────────
+    subgraph VIS["👁️  Vision  (vision/)"]
+        VS["vision_send.py\n────────────────────────\nclass: none (procedural)\nmain() → event loop\n• open_camera()\n• autodetect_port()\n• extract_fingertips()\n• draw_fingertips_camera()\n• draw_fingertips_grid()\n• parse_args()"]
+        VV["vision.py\n────────────────────────\nclass: none (procedural)\nmain() → event loop\n• open_camera()\nStandalone — no serial"]
+        SP["serial_protocol.py\n────────────────────────\nclass SerialSender\n  send_mask(ndarray) → bool\n  send_fingertips(list) → bool\n  read_mode_change() → int\n  esp32_mode: int [prop]\nNamedTuple: Fingertip(x,y,r,g,b)\nfn: pack_mask() → bytes 512B\nfn: pack_fingertips() → bytes\nfn: build_frame(mode,payload)\nfn: crc16_ccitt() → int\nconst: MODE_MASK=0x00\nconst: MODE_FINGERTIPS=0x01"]
+    end
+
+    %% ── Documentation Layer ───────────────────────────────────────────────────
+    subgraph DOCL["📚 Documentation System"]
+        GDS["gdrive_sync.py\n────────────────────────\nfn: sync_to_drive(sections,\n     proposals, commit, date)\nfn: detect_features(files)\nfn: get_changed_files(root)\nfn: compose_feature_section()\nfn: append_to_feature_doc()\nfn: sync_features_to_drive()\nmap: FEATURE_MAP {file→feature}"]
+    end
+
+    %% ── Third-Party Python ────────────────────────────────────────────────────
+    subgraph PYEXT["📦 Python Dependencies"]
+        ANTH["anthropic\nAsyncAnthropic\nmessages.stream()\nthinking=adaptive"]
+        ULT["ultralytics\nYOLO('yolov8n-seg.pt')\n.predict() GPU/CPU\n~6 MB checkpoint"]
+        OCV["opencv-python\ncv2.VideoCapture\ncv2.resize · threshold\nmorphologyEx\nfindContours"]
+        MPIPE["mediapipe\nmp.solutions.hands\nHands.process()\nHandLandmark"]
+        PYSER["pyserial\nserial.Serial\n1 Mbaud 8N1\nwrite_timeout=1s"]
+        NP["numpy\nndarray [64,64]\npackbits MSB-first"]
+        RCLONE["rclone (subprocess)\nGDrive OAuth\nsync local→Drive"]
+        SQLITE["sqlite3 (stdlib)\nproposals table\nreports table"]
+    end
+
+    %% ── Firmware (C++) ───────────────────────────────────────────────────────
+    subgraph FW["⚡ ESP32 Firmware (C++)"]
+        MAIN["main.cpp\n────────────────────────\nMatrixPanel_I2S_DMA *dma\nstruct Fingertip{x,y,r,g,b}\nsetup(): panel init + pins\nloop(): pollFrame()+render\npollFrame() RxState machine\nrenderMask(): pot lerp\nrenderFingertips(): 3×3 dot\nblankPanel(): watchdog"]
+        HUB["ESP32-HUB75-MatrixPanel\n-I2S-DMA.h\n────────────────────────\nMatrixPanel_I2S_DMA\n.begin() .drawPixelRGB888()\n.fillScreenRGB888()\nI2S parallel DMA engine\ndouble-buffered"]
+        GFX["Adafruit GFX Library\n────────────────────────\nAdafruit_GFX base class\nFont structs\n(optional in this project)"]
+        BUSIO["Adafruit BusIO\n────────────────────────\nI2C / SPI abstractions\n(indirect dep of GFX)"]
+    end
+
+    %% ── Python Import Edges ──────────────────────────────────────────────────
+    VS   -->|"from serial_protocol import\nFingertip · MODE_MASK\nMODE_FINGERTIPS · SerialSender"| SP
+    VS   -->|"import cv2"| OCV
+    VS   -->|"from ultralytics import YOLO"| ULT
+    VS   -->|"import mediapipe as mp"| MPIPE
+    VS   -->|"import numpy as np"| NP
+    SP   -->|"import serial"| PYSER
+    SP   -->|"import numpy as np"| NP
+    VV   -->|"import cv2"| OCV
+    VV   -->|"from ultralytics import YOLO"| ULT
+    VV   -->|"import numpy as np"| NP
+    ORC  -->|"import anthropic\nAsyncAnthropic"| ANTH
+    DOC  -->|"import anthropic\nAsyncAnthropic"| ANTH
+    DOC  -->|"from gdrive_sync import\nsync_to_drive · detect_features\nget_changed_files"| GDS
+    DOC  -->|"import sqlite3"| SQLITE
+    GDS  -->|"subprocess.run(rclone)"| RCLONE
+    SETUP-->|"subprocess.run(rclone)"| RCLONE
+
+    %% ── C++ #include Edges ───────────────────────────────────────────────────
+    MAIN -->|"#include"| HUB
+    HUB  -->|"extends"| GFX
+    GFX  -->|"depends"| BUSIO
+
+    %% ── Cross-Layer: Serial Link ─────────────────────────────────────────────
+    SP   -.->|"serial.write(521B)\n1 Mbaud USB-CDC"| MAIN
+
+    %% ── Styles ───────────────────────────────────────────────────────────────
+    style VS    fill:#1a3a4a,stroke:#4fc3f7,color:#fff
+    style VV    fill:#1a3a4a,stroke:#4fc3f7,color:#fff
+    style SP    fill:#0d2b3e,stroke:#00e5ff,color:#fff
+    style MAIN  fill:#2d1b00,stroke:#ff9800,color:#fff
+    style HUB   fill:#2d1b00,stroke:#ff9800,color:#fff
+    style GFX   fill:#1a1a00,stroke:#ffd54f,color:#fff
+    style BUSIO fill:#1a1a00,stroke:#ffd54f,color:#fff
+    style ORC   fill:#1a0a2e,stroke:#ce93d8,color:#fff
+    style DOC   fill:#1a0a2e,stroke:#ce93d8,color:#fff
+    style SETUP fill:#1a0a2e,stroke:#ce93d8,color:#fff
+    style GDS   fill:#1a0a2e,stroke:#ce93d8,color:#fff
+    style ANTH  fill:#0a1a0a,stroke:#a5d6a7,color:#fff
+    style ULT   fill:#0a1a0a,stroke:#a5d6a7,color:#fff
+    style OCV   fill:#0a1a0a,stroke:#a5d6a7,color:#fff
+    style MPIPE fill:#0a1a0a,stroke:#a5d6a7,color:#fff
+    style PYSER fill:#0a1a0a,stroke:#a5d6a7,color:#fff
+    style NP    fill:#0a1a0a,stroke:#a5d6a7,color:#fff
+    style RCLONE fill:#0a1a0a,stroke:#a5d6a7,color:#fff
+    style SQLITE fill:#0a1a0a,stroke:#a5d6a7,color:#fff
+```
+
+### Interface contract summary
+
+| Boundary | Type | Interface |
+|---|---|---|
+| `vision_send.py` → `serial_protocol.py` | Python import | `SerialSender`, `Fingertip`, `MODE_MASK`, `MODE_FINGERTIPS` |
+| `serial_protocol.py` → ESP32 | Binary serial | 521 B framed packet · CRC16-CCITT-FALSE |
+| `doc_agent.py` → `gdrive_sync.py` | Python import | `sync_to_drive()`, `detect_features()`, `get_changed_files()` |
+| `doc_agent.py` → Anthropic API | HTTP/SDK | `AsyncAnthropic.messages.stream()` · thinking=adaptive |
+| `orchestrator.py` → Anthropic API | HTTP/SDK | 7 × parallel `run_agent()` coroutines |
+| `gdrive_sync.py` → Drive | subprocess | `rclone sync` · OAuth · remote `me135drive:` |
+| `main.cpp` → HUB75 lib | C++ `#include` | `MatrixPanel_I2S_DMA` · `drawPixelRGB888()` |
+| `vision.py` | **Isolated** | Standalone CV preview — no serial, no imports from project |
+
+### Code Health Summary
+
+**Overall Grade: B**
+
+This is a well-structured embedded+vision project with clean separation between Python vision pipeline, serial protocol, and ESP32 firmware. The serial protocol is thoughtfully designed with CRC16, ACK/NAK, framing, and mode awareness. Documentation (WIRING.md) is exceptional — production-quality troubleshooting tables.
+
+**Strengths:** Clear module boundaries, robust serial framing with retries, good error messages, thorough hardware docs, proper use of `try/finally` in `vision_send.py`.
+
+**Weaknesses:** Both YOLO and MediaPipe run unconditionally every frame (wasting ~50% compute), `mediapipe` is missing from `requirements.txt` (broken cold install), `open_camera()` is duplicated verbatim across two files, `vision.py` leaks the camera on exceptions, and the PlatformIO monitor baud rate is wrong. The firmware uses a 513-byte stack buffer where a static or incremental CRC would be safer on ESP32's limited stack.
+
+No security-critical issues found. No hardcoded API keys — the Anthropic SDK reads from the environment correctly.
+
+---
