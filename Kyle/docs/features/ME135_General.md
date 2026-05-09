@@ -2276,3 +2276,386 @@ The codebase is well-structured for a university project. The serial protocol (P
 No security issues found (no credentials, no shell injection, good path-traversal guard in orchestrator).
 
 ---
+## v12 — 2026-05-09 14:13 — `1f930b3`
+
+### What Changed
+
+This batch of commits (from `fa3fc0f` → `1f930b3`) represents a major capability leap: the project went from a single-mode silhouette display to a **dual-mode system** with both person silhouettes and color fingertip tracking, plus a parallel GUI effort from a teammate.
+
+### CV Pipeline & Vision (`vision/`)
+
+- **New unified pipeline `vision_send.py`** — Merges YOLO person segmentation (Kyle's original) with MediaPipe hand tracking (Wen's contribution) into a single script. Both pipelines run every frame; the active TX mode is determined by the ESP32's physical button. This is the new "main" entry point, replacing the old `vision.py` as the operational sender.
+  - *Why it matters:* The system can now detect colored fingertips (up to 10, across 2 hands) with cycling per-finger RGB colors — a second interaction modality beyond the silhouette.
+- **`vision.py` preserved as standalone** — The original YOLO-only pipeline remains unchanged for debugging or single-mode use. No regression risk.
+
+### Serial Protocol (`vision/serial_protocol.py`)
+
+- **Added Mode 0x01 (fingertip packets)** — New `pack_fingertips()` / `unpack_fingertips()` functions serialize up to 10 fingertip positions with per-tip RGB color into a compact `[count][x,y,r,g,b]…` payload. CRC16 integrity check covers the mode byte + payload.
+- **Mode-change notification handling** — `SerialSender` now listens for ESP32 mode-change bytes (`0x10` = mode 0, `0x11` = mode 1) interleaved with ACK/NAK responses. The `_handle_mode_byte()` method drains and interprets these asynchronously.
+  - *Why it matters:* The ESP32 button drives mode selection — the Python side is a follower, not a leader. Clean separation of concerns.
+
+### ESP32 Firmware (`firmware/me135_led_pot/src/main.cpp`)
+
+- **Dual-mode rendering** — Firmware now handles two frame types:
+  - Mode 0 (mask): 512-byte bit-packed silhouette, colored by pot-controlled white→red lerp (unchanged behavior).
+  - Mode 1 (fingertips): Parses `[count][x,y,r,g,b]…` packets and renders each fingertip as a **3×3 pixel block** for visibility on the 2mm-pitch panel.
+- **Physical button toggle (GPIO 33)** — A debounced pushbutton cycles between modes. On press, the ESP32 sends a mode-notification byte (`0x10`/`0x11`) upstream so the Python sender switches packet format.
+- **Receive state machine extended** — `pollFrame()` now validates the incoming mode byte against `currentMode` and rejects mismatched frames (returns `RX_SYNC_ERROR`), preventing garbled renders during mode transitions.
+- **Watchdog on both modes** — If no valid frame arrives within 5 seconds, the panel blanks. Prevents stale imagery if the USB link drops.
+
+### Hardware Documentation (`firmware/WIRING.md`)
+
+- **HUB75 pin numbering corrected** (`c898c6b`) — The pin table was renumbered to match the Waveshare RGB-Matrix-P2 64×64 silkscreen (pin 1 = bottom-right, pin 16 = top-left). Previously the numbering was inverted, which would cause a mis-wire on first build.
+  - *Why it matters:* A wiring doc error on a 16-pin ribbon cable means magic smoke. This was a safety-critical doc fix.
+- **Pot description corrected** (`32d47a7`) — Documentation previously said the potentiometer controls "brightness." It actually controls a white→red color lerp (effect selection), not intensity. Fixed to prevent user confusion.
+
+### GUI (Steph's Branch — `Steph/Project_GUI.py`)
+
+- **New Tkinter/OpenCV GUI added** (`10cd864`, merged at `1f930b3`) — Teammate Wen/Steph contributed a standalone GUI with:
+  - Final layout with interactive icons
+  - Checkerboard border decoration (`checker_tile.png` asset)
+  - YOLOv8n-seg model bundled (`yolov8n-seg.pt`)
+  - Separate `requirements.txt` for its dependencies
+  - *Why it matters:* This is a parallel UI effort — a presentation-ready front-end, likely for the ME135 final demo. It lives in `Steph/` and doesn't touch Kyle's pipeline code.
+
+### DevOps & Housekeeping
+
+- **Stale `agent_outputs/` archived** (`fa3fc0f`) — Old Claude agent swarm outputs cleaned up.
+- **Doc-hook auto-commit loop fixed** (`fa3fc0f`) — The git pre-push hook was triggering its own push, creating an infinite loop. Now broken with `[skip ci]` markers on auto-generated doc commits.
+- **Presentation PDF added** — `ME 135235 Presentation 3.pdf` (9606 lines in diff = binary blob) committed at the repo root for class deliverable tracking.
+
+### Evolution Timeline
+
+```mermaid
+gitGraph
+   commit id: "fa3fc0f" tag: "housekeeping" type: HIGHLIGHT
+   commit id: "6c815f7" type: REVERSE
+   commit id: "32d47a7" tag: "doc-fix"
+   commit id: "735a33c" type: REVERSE
+   commit id: "c898c6b" tag: "wiring-fix"
+   commit id: "7792982" type: REVERSE
+   commit id: "4d4791f" type: REVERSE
+   branch wen-gui
+   checkout wen-gui
+   commit id: "10cd864" tag: "GUI"
+   checkout main
+   commit id: "18975c4" tag: "dual-mode"
+   merge wen-gui id: "1f930b3" tag: "HEAD"
+```
+
+### Subsystem touch map
+
+| Commit | CV Pipeline | Serial Protocol | ESP32 Firmware | Wiring Docs | GUI (Steph/) | DevOps |
+|--------|:-----------:|:---------------:|:--------------:|:-----------:|:------------:|:------:|
+| `fa3fc0f` archive + fix loop | | | | | | ✅ |
+| `32d47a7` pot desc fix | | | | ✅ | | |
+| `c898c6b` HUB75 pin fix | | | | ✅ | | |
+| `10cd864` GUI layout (Wen) | | | | | ✅ | |
+| `18975c4` dual-mode merge | ✅ | ✅ | ✅ | | | |
+| `1f930b3` GUI merge (HEAD) | | | | | ✅ | |
+
+> Commits marked `type: REVERSE` in the graph are auto-generated doc reports (`[skip ci]`) — they contain no code changes.
+
+### Key milestone
+
+Commit `18975c4` is the architectural inflection point: the system graduated from a **single-pipeline, single-mode** design (YOLO silhouette only) to a **dual-pipeline, button-toggled** architecture spanning all three core subsystems (CV, serial protocol, firmware). Every layer gained a new code path, yet the mode-negotiation protocol keeps them synchronized through a simple 1-byte notification scheme.
+
+### System Architecture
+
+```mermaid
+flowchart TD
+    subgraph CAM["📷 INPUT — PS3 Eye / USB Webcam"]
+        C1["USB Camera\n640×480 @ 60 fps · BGR 8-bit\nLinux: gspca_ov534 driver\ncv2.CAP_V4L2 | CAP_AVFOUNDATION"]
+    end
+
+    subgraph HOST["🖥️ HOST — Jetson Orin / Mac  ·  Python 3"]
+        direction TB
+
+        subgraph GPU_LAYER["⚡ GPU/CPU — YOLOv8 (Ultralytics)"]
+            Y1["YOLOv8n-seg Inference\nIMGSZ=640 · letterbox padded\nclass=[0] person only\nconf: 5–95% (trackbar)"]
+            Y2["Mask tensors → CPU\n.data.cpu().numpy()\nshape: (N, H, W) float32\nboxes: (N,4) int32"]
+        end
+
+        subgraph CPU_LAYER["🔲 CPU — OpenCV / NumPy"]
+            O1["Silhouette OR-merge\nnp.maximum all person masks\nshape: (480,640) uint8"]
+            O2["Morph Close\n5×5 ellipse kernel\niterations=1"]
+            O3["findContours + area filter\nmin_area = 0.2% × H × W\nredraw clean silhouette"]
+            O4["Resize → 64×64\ncv2.INTER_AREA\n(480,640)→(64,64) uint8"]
+            O5["Binary threshold\n>96 → 255\n(64,64) binary"]
+        end
+
+        subgraph MP_LAYER["🖐 CPU — MediaPipe Hands"]
+            M1["Hands.process(RGB frame)\nmax_num_hands=2\ndetect_conf=0.60\ntrack_conf=0.60"]
+            M2["Extract 5 tip landmarks\nTIP_IDS=[4,8,12,16,20]\nnorm→64px grid\nFingertip(x,y,r,g,b)"]
+        end
+
+        subgraph PROTOCOL["📦 serial_protocol.py"]
+            P1["pack_mask()\nnp.packbits MSB-first row-major\n(64,64)→512 B"]
+            P2["pack_fingertips()\ncount(1B) + [x y r g b](5B)×N\n1–51 B · N≤10"]
+            P3["build_frame()\n[0xAA 0x55][LEN 2B][MODE 1B]\n[payload][CRC16 2B][0x55 0xAA]\nMode 0: 521 B total\nMode 1: 10–60 B total"]
+            P4["CRC16/CCITT-FALSE\npoly=0x1021 · init=0xFFFF\nover MODE+payload bytes"]
+        end
+
+        subgraph SENDER["📡 SerialSender"]
+            S1["serial.Serial()\n1,000,000 baud · 8N1\nwrite_timeout=1.0s\nack_timeout=0.05s\nmax_retries=3"]
+            S2["_wait_ack()\nACK=0x06 → success\nNAK=0x15 → retry\n0x10/0x11 → mode switch"]
+        end
+    end
+
+    subgraph SERIAL_LINK["🔌 USB-UART · 1,000,000 baud"]
+        direction LR
+        TX["TX → 521 B/frame ≈ 5.2 ms\n(mode 0 mask)"]
+        RX["RX ← 1 B ACK/NAK\nor mode-notify 0x10/0x11"]
+    end
+
+    subgraph ESP32_FW["⚙️ ESP32 DevKitC — C++/Arduino @ 240 MHz"]
+        direction TB
+
+        subgraph FSM["📥 RX State Machine  (10 states)"]
+            F1["RX_WAIT_AA → RX_WAIT_55\n→ RX_LEN_HI/LO → RX_MODE\n→ RX_PAYLOAD(512B) → RX_CRC\n→ RX_END · timeout=100ms\nRX buffer: 2048 B"]
+        end
+
+        subgraph VERIFY["🔐 Verify + Dispatch"]
+            V1["CRC16/CCITT-FALSE check\nMode match check\nACK=0x06 / NAK=0x15\nframebuf[] ← rxbuf[]"]
+        end
+
+        subgraph POT["🎛 ADC — GPIO 34"]
+            A1["ADC1_CH6 · 12-bit\n10kΩ linear pot\nEWMA smoothing α\nt=0→white  t=1→red\ncr=255 · cg=cb=(1-t)×255"]
+        end
+
+        subgraph BTN["🔘 Button — GPIO 33"]
+            B1["INPUT_PULLUP\n50ms debounce\nMode 0↔1 toggle\nTX notify 0x10/0x11"]
+        end
+
+        subgraph RENDER["🎨 Render Engine"]
+            R1["renderMask()\nunpack bit i → pixel(x,y)\n4096 iterations\ndrawPixelRGB888(x,y,cr,cg,cb)"]
+            R2["renderFingertips()\n3×3 block per tip\ncolored dots on black\ndrawPixelRGB888"]
+        end
+
+        subgraph DMA_ENG["⚡ DMA I2S Engine"]
+            D1["ESP32-HUB75-MatrixPanel-I2S-DMA\nv3.0.15 · rowBitStruct\nEWMA buffer: uint16_t[]\n8-bit color depth\nparallel 13-wire output\nI2S peripheral + GDMA"]
+        end
+    end
+
+    subgraph PANEL["💡 DISPLAY — Waveshare RGB-Matrix-P2 64×64"]
+        direction TB
+        HUB["HUB75E 16-pin IDC · 1/32 scan\nR1 G1 B1 R2 G2 B2 · A B C D E\nCLK · LAT · OE\n4,096 RGB LEDs · 128×128 mm · 2mm pitch"]
+        PSU["5V / 3A PSU\n+1000µF bulk cap\ncommon GND with ESP32"]
+    end
+
+    C1 -->|"921,600 B/frame BGR"| Y1
+    C1 -->|"921,600 B/frame RGB"| M1
+    Y1 --> Y2
+    Y2 -->|"(N,480,640) float32"| O1
+    M1 --> M2
+    O1 --> O2 --> O3 --> O4 --> O5
+    O5 -->|"(64,64) uint8"| P1
+    M2 -->|"list[Fingertip] ≤10"| P2
+    P1 -->|"512 B"| P3
+    P2 -->|"1–51 B"| P3
+    P3 --- P4
+    P3 -->|"521 B packet (mode 0)"| S1
+    S1 <--> S2
+    S1 -->|"USB-UART 1 Mbaud"| TX
+    RX -->|"1 B"| S2
+    TX --> F1
+    F1 --> V1
+    V1 -->|"RX_OK + mode match"| R1
+    V1 -->|"RX_OK + mode match"| R2
+    V1 -->|"ACK/NAK"| RX
+    A1 -->|"t ∈ [0.0, 1.0]"| R1
+    B1 -->|"mode toggle"| V1
+    B1 -->|"0x10/0x11"| RX
+    R1 --> D1
+    R2 --> D1
+    D1 -->|"13 GPIO lines · 16-pin IDC\n~12,288 B DMA buffer"| HUB
+    PSU -->|"5V / 3A"| HUB
+```
+
+### Data Flow
+
+One frame journey — **Mode 0 (mask)** path. Timing estimates based on yolov8n-seg on CPU; GPU path ~3–5× faster.
+
+```mermaid
+sequenceDiagram
+    participant CAM  as 📷 Camera<br/>(640×480)
+    participant CV   as 🖥️ vision_send.py<br/>(CPU/GPU)
+    participant YOLO as ⚡ YOLOv8n-seg<br/>(GPU/CPU)
+    participant PACK as 📦 serial_protocol<br/>.pack_mask()
+    participant SER  as 📡 SerialSender<br/>(pyserial)
+    participant UART as 🔌 USB-UART<br/>1 Mbaud
+    participant FSM  as 📥 ESP32 RX FSM<br/>(2048B buf)
+    participant REND as 🎨 ESP32 Render
+    participant DMA  as ⚡ DMA I2S
+    participant LED  as 💡 64×64 Panel
+
+    Note over CAM,LED: ── Frame N begins ──
+
+    CAM->>CV: cap.read() → BGR frame<br/>921,600 B · t₀=0 ms
+
+    CV->>CV: cvtColor BGR→RGB<br/>for MediaPipe<br/>~0.5 ms
+
+    CV->>YOLO: model.predict(frame,<br/>classes=[0], imgsz=640)<br/>t₀ + 0.5 ms
+
+    Note over YOLO: letterbox 640×480→640×640<br/>pad + inference<br/>~30 ms CPU / ~8 ms GPU
+
+    YOLO-->>CV: result.masks.data → (N,480,640) float32<br/>result.boxes.xyxy → (N,4) int32<br/>t₀ + ~31 ms
+
+    CV->>CV: .cpu().numpy() GPU→CPU transfer<br/>np.maximum mask OR-merge<br/>(480,640) uint8 · ~0.5 ms
+
+    CV->>CV: morphologyEx MORPH_CLOSE<br/>5×5 ellipse kernel<br/>(480,640) uint8 · ~0.3 ms
+
+    CV->>CV: findContours + area filter<br/>drawContours clean silhouette<br/>(480,640) uint8 · ~0.5 ms
+
+    CV->>CV: cv2.resize → (64,64)<br/>INTER_AREA · threshold >96→255<br/>(64,64) uint8 · ~0.1 ms
+
+    Note over CV: Frame ready for packing<br/>t₀ + ~33 ms
+
+    CV->>PACK: pack_mask(small)<br/>(64,64) uint8 · ~0.1 ms
+
+    Note over PACK: np.packbits(arr.flatten(), bitorder='big')<br/>4096 bits → 512 bytes, MSB-first row-major
+
+    PACK-->>CV: payload = 512 B
+
+    CV->>PACK: build_frame(MODE=0x00, payload)<br/>CRC16/CCITT-FALSE over [0x00 + 512 B]
+
+    Note over PACK: Frame structure:<br/>[0xAA 0x55] 2B start<br/>[0x02 0x00] 2B len=512<br/>[0x00]      1B mode<br/>[payload]  512B<br/>[CRC_H CRC_L] 2B<br/>[0x55 0xAA] 2B end<br/>─────────────<br/>Total: 521 B
+
+    PACK-->>SER: packet = 521 B
+
+    SER->>SER: _drain_pending_input()<br/>consume any mode-notifies<br/>~0.05 ms
+
+    SER->>UART: ser.write(521 B)<br/>ser.flush()<br/>t₀ + ~33.5 ms
+
+    Note over UART: 521 B × 10 bits/B ÷ 1,000,000 bps<br/>= 5.21 ms wire time
+
+    UART->>FSM: byte stream arrives<br/>t₀ + ~38.7 ms (end of last bit)
+
+    FSM->>FSM: RX_WAIT_AA → 0xAA<br/>RX_WAIT_55 → 0x55<br/>RX_LEN_HI/LO → 0x0200<br/>RX_MODE → 0x00<br/>RX_PAYLOAD × 512<br/>RX_CRC_HI/LO<br/>RX_END_55/AA<br/>~0.3 ms parse
+
+    FSM->>FSM: crc16_ccitt([0x00 + 512B])<br/>compare to received CRC<br/>~0.2 ms
+
+    alt CRC OK + mode match
+        FSM->>UART: Serial.write(ACK=0x06)<br/>1 B · ~0.01 ms
+        FSM->>REND: memcpy rxbuf→framebuf[512]<br/>512 B · ~0.05 ms
+    else CRC FAIL
+        FSM->>UART: Serial.write(NAK=0x15)
+        Note over SER: retry up to 3×<br/>+5.21 ms each
+    end
+
+    UART-->>SER: ACK byte = 0x06<br/>_wait_ack() returns true<br/>t₀ + ~39.3 ms
+
+    Note over REND: Pot ADC read (GPIO 34)<br/>EWMA filtered → t ∈ [0.0, 1.0]
+
+    REND->>REND: renderMask()<br/>loop 4,096 pixels<br/>unpack bit → if set:<br/>  cr=255, cg=cb=(1-t)×255<br/>drawPixelRGB888(x,y,r,g,b)<br/>~1 ms
+
+    REND->>DMA: drawPixelRGB888 calls<br/>update rowBitStruct DMA buffer<br/>12,288 B effective canvas
+
+    DMA->>LED: I2S parallel DMA output<br/>13 GPIO lines (R1G1B1 R2G2B2<br/>A B C D E CLK LAT OE)<br/>1/32 scan · 8-bit color depth<br/>continuous refresh ~60+ Hz
+
+    Note over LED: 4,096 RGB LEDs illuminated<br/>128×128 mm panel · 2mm pitch<br/>white→red lerp on silhouette<br/>black background
+
+    Note over CAM,LED: ── Frame N complete ──<br/>Total host latency: ~39 ms (CPU)<br/>/ ~14 ms (GPU)<br/>512 B/frame payload · 521 B/frame wire
+```
+
+### Module Dependency Graph
+
+```mermaid
+graph TD
+    %% ── Entry-point modules ──────────────────────────────────────────────────
+    VS["vision_send.py\n───────────────\nmain() entry point\nYOLO + MediaPipe pipeline\nMode-aware TX loop\nCLI: --port --baud --no-serial --camera"]:::entry
+
+    VV["vision.py\n───────────────\nmain() entry point\nStandalone YOLO preview\nNo serial TX · GUI only"]:::entry
+
+    ORC["orchestrator.py\n───────────────\nrun_agent() async loop\n7 AI agents spawned in parallel\nwrite_file / read_file tools\nMODEL: Opus(arch) + Sonnet(code)"]:::entry
+
+    DA["doc_agent.py\n───────────────\nHistorian + Architect + Critic\nSQLite proposal history DB\nPre-push git hook support\n--implement PROP_ID"]:::entry
+
+    GDS["gdrive_setup.py\n───────────────\nOne-time rclone OAuth setup\nCreates 'me135drive' remote\nTest sync to Drive"]:::entry
+
+    %% ── Shared library modules ───────────────────────────────────────────────
+    SP["serial_protocol.py\n───────────────────────────────\nclass SerialSender\n  __init__(port, baudrate=1_000_000)\n  send_mask(mask: np.ndarray) → bool\n  send_fingertips(tips: list[Fingertip]) → bool\n  read_mode_change() → int | None\n  esp32_mode: int  @property\nclass Fingertip(NamedTuple)\n  x, y, r, g, b: int\nfunctions:\n  pack_mask() → 512 B\n  pack_fingertips() → 1–51 B\n  build_frame() → bytes\n  crc16_ccitt() → uint16\n  unpack_mask() / unpack_fingertips()"]:::lib
+
+    GDR["gdrive_sync.py\n─────────────────────────────\nfunctions:\n  sync_to_drive(sections, proposals)\n  detect_features(changed_files) → list\n  get_changed_files(repo_root) → list\n  compose_feature_section()\n  append_to_feature_doc()\nFEATURE_MAP: dict[filename→feature]"]:::lib
+
+    %% ── Third-party Python ───────────────────────────────────────────────────
+    YOLO_LIB["ultralytics\n(YOLOv8)"]:::third
+    CV2["opencv-python\ncv2"]:::third
+    NP["numpy"]:::third
+    MP_LIB["mediapipe\nmp.solutions.hands"]:::third
+    SER_LIB["pyserial\nserial.Serial\nserial.tools.list_ports"]:::third
+    ANT["anthropic\nAsyncAnthropic\n(Claude API)"]:::third
+    SQLITE["sqlite3\n(stdlib)"]:::third
+    STRUCT["struct / logging\n(stdlib)"]:::third
+    SUBP["subprocess / shutil\n(stdlib)"]:::third
+
+    %% ── Firmware (C++) ───────────────────────────────────────────────────────
+    subgraph FW["⚙️ ESP32 Firmware — C++"]
+        MCU["firmware/me135_led_pot/src/main.cpp\n───────────────────────────────────────\nMatrixPanel_I2S_DMA *dma_display\nstruct Fingertip {x,y,r,g,b}\nRxState FSM (10 states)\npollFrame() → RxResult\nrenderMask() · renderFingertips()\nblankPanel()\nsetup() / loop()"]:::fw
+        HUB75["ESP32-HUB75-MatrixPanel-I2S-DMA\nv3.0.15\ndrawPixelRGB888()\nfillScreenRGB888()\nrowBitStruct DMA buffer\nI2S parallel output"]:::fw
+        GFX["Adafruit GFX Library\nv1.11.9\nAdafruit_GFX base class\nfont support"]:::fw
+        BUSIO["Adafruit BusIO\nv1.16.1\nI2C / SPI abstraction"]:::fw
+    end
+
+    %% ── Edges: internal imports ───────────────────────────────────────────────
+    VS -->|"from serial_protocol import\nFingertip, MODE_MASK,\nMODE_FINGERTIPS, SerialSender"| SP
+    VS -->|"import cv2"| CV2
+    VS -->|"import numpy as np"| NP
+    VS -->|"from ultralytics import YOLO"| YOLO_LIB
+    VS -->|"import mediapipe as mp"| MP_LIB
+
+    VV -->|"import cv2"| CV2
+    VV -->|"import numpy as np"| NP
+    VV -->|"from ultralytics import YOLO"| YOLO_LIB
+
+    SP -->|"import numpy"| NP
+    SP -->|"import serial\nimport serial.tools.list_ports"| SER_LIB
+    SP -->|"import struct, logging"| STRUCT
+
+    DA -->|"from gdrive_sync import\nsync_to_drive\ndetect_features\nget_changed_files"| GDR
+    DA -->|"import anthropic"| ANT
+    DA -->|"import sqlite3"| SQLITE
+    DA -->|"import subprocess"| SUBP
+
+    GDR -->|"import subprocess, shutil"| SUBP
+
+    ORC -->|"import anthropic"| ANT
+
+    GDS -->|"import subprocess, shutil"| SUBP
+
+    MCU -->|"#include"| HUB75
+    HUB75 -->|"extends"| GFX
+    GFX -->|"uses"| BUSIO
+
+    %% ── Cross-boundary interfaces ─────────────────────────────────────────────
+    SP -.->|"USB-UART 1 Mbaud\n521 B/frame (mask)\n1–60 B/frame (fingertips)\nACK=0x06 / NAK=0x15\nnotify=0x10/0x11"| MCU
+
+    %% ── Styles ────────────────────────────────────────────────────────────────
+    classDef entry  fill:#1e3a5f,stroke:#4a9eff,color:#e8f4ff,rx:6
+    classDef lib    fill:#1a4a2e,stroke:#4adf86,color:#e8fff0,rx:6
+    classDef third  fill:#3a2a1a,stroke:#df964a,color:#fff5e8,rx:6
+    classDef fw     fill:#3a1a2e,stroke:#df4aaf,color:#ffe8f5,rx:6
+```
+
+### Interface Summary Table
+
+| Boundary | From | To | Contract |
+|---|---|---|---|
+| **Python import** | `vision_send.py` | `serial_protocol.py` | `SerialSender`, `Fingertip`, `MODE_*` constants |
+| **Python import** | `doc_agent.py` | `gdrive_sync.py` | `sync_to_drive()`, `detect_features()`, `get_changed_files()` |
+| **Serial wire** | `serial_protocol.SerialSender` | `main.cpp` | `build_frame()` framing · CRC16/CCITT-FALSE · ACK/NAK |
+| **C++ include** | `main.cpp` | `ESP32-HUB75-MatrixPanel-I2S-DMA` | `drawPixelRGB888()`, `fillScreenRGB888()` |
+| **C++ inheritance** | `MatrixPanel_I2S_DMA` | `Adafruit_GFX` | GFX drawing primitives |
+| **Claude API** | `orchestrator.py` / `doc_agent.py` | `anthropic` | Async streaming · tool_use loop |
+
+### Code Health Summary
+
+**Overall Grade: B−**
+
+The project demonstrates solid embedded/vision architecture — a clean framed serial protocol with CRC, well-documented HUB75 wiring, and a coherent agent-based documentation system. The firmware state machine is correct and robust against malformed input.
+
+**Strengths:** Protocol symmetry between Python and C++ (matching CRC, framing, mode semantics). Excellent hardware documentation (WIRING.md). Good use of EWMA smoothing on pot readings. Defensive input validation on serial payloads.
+
+**Weaknesses:** A path traversal vulnerability in doc_agent.py's `read_source` tool is the most urgent finding. Missing `mediapipe` dependency in requirements.txt will break fresh installs. Both CV pipelines run unconditionally every frame, halving achievable FPS. Shared mutable state between concurrent async agents is fragile. The firmware allocates a 513-byte stack buffer unnecessarily. Several resources (serial port, camera) lack guaranteed cleanup via context managers.
+
+---
