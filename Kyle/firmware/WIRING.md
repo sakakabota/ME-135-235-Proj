@@ -27,25 +27,26 @@ Common ground: ESP32 GND ↔ 5V PSU GND ↔ HUB75 GND pins. Mandatory.
 ## 3. ESP32 ↔ HUB75E pinout
 
 16-pin IDC (2×8, 0.1") into the panel header labeled **IN**.
+Pin numbering matches the Waveshare RGB-Matrix-P2 64×64 silkscreen (pin 1 bottom-right, pin 16 top-left).
 
 | HUB75 pin | Signal | ESP32 GPIO | Notes |
 |---|---|---|---|
-| 1 | R1 | GPIO 25 | library default |
-| 2 | G1 | GPIO 26 | library default |
-| 3 | B1 | GPIO 27 | library default |
-| 4 | GND | GND | tie to ESP32 GND |
-| 5 | R2 | GPIO 14 | library default |
-| 6 | G2 | GPIO 12 | library default — **strapping pin, see §6** |
-| 7 | B2 | GPIO 13 | library default |
-| 8 | E | GPIO 32 | **REQUIRED** for 64×64 (1/32 scan) |
-| 9 | A | GPIO 23 | library default |
-| 10 | B | GPIO 19 | library default |
-| 11 | C | GPIO 5 | library default |
-| 12 | D | GPIO 17 | library default |
-| 13 | CLK | GPIO 16 | library default |
-| 14 | LAT/STB | GPIO 4 | library default |
-| 15 | OE | GPIO 15 | library default — strapping pin |
-| 16 | GND | GND | second panel ground; tie both |
+| 1 | GND | GND | tie to ESP32 GND |
+| 2 | OE | GPIO 15 | library default — strapping pin |
+| 3 | LAT/STB | GPIO 4 | library default |
+| 4 | CLK | GPIO 16 | library default |
+| 5 | D | GPIO 17 | library default |
+| 6 | C | GPIO 5 | library default |
+| 7 | B | GPIO 19 | library default |
+| 8 | A | GPIO 23 | library default |
+| 9 | E | GPIO 32 | **REQUIRED** for 64×64 (1/32 scan) |
+| 10 | B2 | GPIO 13 | library default |
+| 11 | G2 | GPIO 12 | library default — **strapping pin, see §6** |
+| 12 | R2 | GPIO 14 | library default |
+| 13 | GND | GND | second panel ground; tie both |
+| 14 | B1 | GPIO 27 | library default |
+| 15 | G1 | GPIO 26 | library default |
+| 16 | R1 | GPIO 25 | library default |
 
 ## 4. Power wiring
 
