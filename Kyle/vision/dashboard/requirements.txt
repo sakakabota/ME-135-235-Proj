@@ -1,0 +1,9 @@
+PyQt6==6.9.1
+PyQt6-Qt6==6.9.0
+PyQt6_sip==13.11.1
+opencv-python-headless==4.13.0.92
+numpy>=2.0
+pyserial>=3.5
+ultralytics>=8.0
+python-dotenv
+google-genai
