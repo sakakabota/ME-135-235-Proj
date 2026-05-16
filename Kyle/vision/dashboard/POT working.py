@@ -175,8 +175,14 @@ class VisionWorker(QThread):
                     cv2.putText(annotated_frame, detection_label, (x1, max(y1 - 5, 10)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 72, 1), 2)
 
-            # 64×64 binary mask what would ship to the LED in mode 0 
-            small = cv2.resize(silhouette, (PANEL_SIZE, PANEL_SIZE), interpolation=cv2.INTER_AREA)
+            # 64×64 binary mask what would ship to the LED in mode 0
+            # center crop the camera frame to square first so people are not squished
+            fh_sil, fw_sil = silhouette.shape[:2]
+            side_sil = min(fh_sil, fw_sil)
+            y0_sil = (fh_sil - side_sil) // 2
+            x0_sil = (fw_sil - side_sil) // 2
+            silhouette_sq = silhouette[y0_sil:y0_sil + side_sil, x0_sil:x0_sil + side_sil]
+            small = cv2.resize(silhouette_sq, (PANEL_SIZE, PANEL_SIZE), interpolation=cv2.INTER_AREA)
             _, mask_64 = cv2.threshold(small, self.pixel_threshold, 255, cv2.THRESH_BINARY)
 
             # Pull mode pot from ESP32 first mediapipe is only useful in mode 1 
@@ -461,7 +467,7 @@ class PixelMirrorGUI(QMainWindow):
         
         pot_lbl = QLabel("POT (MOCK)")
         pot_lbl.setFont(QFont("Fixedsys", 12, QFont.Weight.Bold))
-        pot_lbl.setStyleSheet(f"color: {{TEXT_DARK}}; border: none;")
+        pot_lbl.setStyleSheet(f"color: {RETRO_ORANGE}; border: none;")
         self.slider_pot = QSlider(Qt.Orientation.Horizontal)
         self.slider_pot.setRange(0, 255)
         self.slider_pot.setValue(128)
